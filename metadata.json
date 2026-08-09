@@ -1,0 +1,6 @@
+{
+  "name": "رحلة داعية",
+  "description": "منصة تحفيزية تفاعلية لمعلمي القرآن والتربية الإسلامية لمتابعة وإلهام الطلاب من خلال رحلات تعليمية ونظام نقاط وجوائز",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
