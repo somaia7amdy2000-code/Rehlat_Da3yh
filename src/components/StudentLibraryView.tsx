@@ -212,7 +212,7 @@ export const StudentLibraryView: React.FC<StudentLibraryViewProps> = ({
           </h1>
 
           <p className="text-slate-300 text-xs sm:text-sm font-bold leading-relaxed">
-            جميع المواد والكتب والتسجيلات الصوتية في هذه المكتبة مرفوعة مباشرة من معلماتك لمساعدتك في مواصلة التقدم والإبداع في رحلتك!
+            جميع المواد والكتب والتسجيلات الصوتية في هذه المكتبة مرفوعة مباشرة من معلمك لمساعدتك في مواصلة التقدم والإبداع في رحلتك!
           </p>
 
           <div className="flex items-center gap-2 sm:gap-4 text-xs font-bold text-teal-200/80 pt-1 flex-wrap">
@@ -378,7 +378,7 @@ export const StudentLibraryView: React.FC<StudentLibraryViewProps> = ({
       ) : filteredItems.length === 0 ? (
         <div className="bg-white rounded-[24px] sm:rounded-[32px] p-8 sm:p-12 text-center border border-dashed border-slate-200 space-y-3 w-full max-w-full">
           <BookOpen className="w-12 h-12 text-slate-300 mx-auto" />
-          <h3 className="font-black text-base text-slate-700">لم تضف المعلمة أي موارد للمكتبة حتى الآن.</h3>
+          <h3 className="font-black text-base text-slate-700">لم يضف المعلم أي موارد للمكتبة حتى الآن.</h3>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 w-full max-w-full min-w-0">
@@ -441,7 +441,7 @@ export const StudentLibraryView: React.FC<StudentLibraryViewProps> = ({
 
                   {/* Footer Source Info */}
                   <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-xs font-bold text-slate-400 gap-2 flex-wrap">
-                    <span className="truncate max-w-[140px] sm:max-w-[160px]">مرفوع بواسطة: {item.uploadedBy || 'المعلمة'}</span>
+                    <span className="truncate max-w-[140px] sm:max-w-[160px]">مرفوع بواسطة: {item.uploadedBy || 'المعلم'}</span>
                     <span className="text-teal-600 group-hover:underline flex items-center gap-1 shrink-0">
                       <span>فتح</span>
                       <ExternalLink className="w-3.5 h-3.5" />
@@ -560,7 +560,7 @@ export const StudentLibraryView: React.FC<StudentLibraryViewProps> = ({
                     <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-1">
                       <h4 className="font-black text-slate-900 text-base">{activeMediaModal.title}</h4>
                       <p className="text-xs font-bold text-slate-600 leading-relaxed">
-                        {activeMediaModal.description || 'درس مرئي يوضح أصول القراءة والتطبيقات العملية مباشرة من المعلمة.'}
+                        {activeMediaModal.description || 'درس مرئي يوضح أصول القراءة والتطبيقات العملية مباشرة من المعلم.'}
                       </p>
                     </div>
                   </div>

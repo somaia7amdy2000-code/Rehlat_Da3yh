@@ -132,7 +132,6 @@ export const BatchReportsView: React.FC<BatchReportsViewProps> = ({ batch, batch
       xp: student.points || 0,
       points: student.points || 0,
       completedChallengesCount,
-      approvedAchievementsCount: studentApprovedSubs.filter((s) => s.sourceType === 'achievement' || s.achievementId).length,
       clubTasksCompleted: studentApprovedSubs.filter((s) => s.sourceType === 'club').length,
       clubAnnouncementsCount: 0,
       attendanceRate: student.attendanceRate ?? 95,

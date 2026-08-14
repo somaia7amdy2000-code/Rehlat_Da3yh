@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, User, School, Sparkles, Trophy, BookOpen, Compass, Award, CheckCircle2, Clock, AlertCircle, Loader2 } from 'lucide-react';
-import { BatchStudent, Batch, BatchClub, BatchChallenge, Achievement, PendingSubmission } from '../../types/teacher';
+import { X, User, School, Sparkles, Trophy, BookOpen, Compass, CheckCircle2, Clock, AlertCircle, Loader2 } from 'lucide-react';
+import { BatchStudent, Batch, BatchClub, BatchChallenge, PendingSubmission } from '../../types/teacher';
 import { calculateStudentJourney } from '../../services/journeyEngine';
 import { teacherService } from '../../services/teacherService';
 
@@ -60,9 +60,6 @@ export const StudentProfileModal: React.FC<StudentProfileModalProps> = ({ studen
     }
   };
 
-  const unlockedAchievements: Achievement[] =
-    fullContext?.unlockedAch || fullContext?.unlockedAchievements || [];
-
   const challengesList: BatchChallenge[] = fullContext?.challenges || [];
   const submissionsList: PendingSubmission[] = fullContext?.submissions || [];
 
@@ -116,7 +113,7 @@ export const StudentProfileModal: React.FC<StudentProfileModalProps> = ({ studen
     (s) =>
       s.status === 'approved' &&
       !matchedSubIds.has(s.id) &&
-      (s.sourceType === 'challenge' || (!s.sourceType && !s.achievementId && s.sourceType !== 'club')) &&
+      (s.sourceType === 'challenge' || (!s.sourceType && s.sourceType !== 'club')) &&
       (s.studentId === activeStudent.id ||
         (s.studentCode && activeStudent.studentCode && s.studentCode.trim().toLowerCase() === activeStudent.studentCode.trim().toLowerCase()) ||
         (s.studentName && activeStudent.name && s.studentName.trim().toLowerCase() === activeStudent.name.trim().toLowerCase()))
@@ -132,13 +129,11 @@ export const StudentProfileModal: React.FC<StudentProfileModalProps> = ({ studen
     points: currentStudentPoints,
     attendanceRate: activeStudent.attendanceRate || 0,
     completedChallengesCount: realCompletedChallengesCount,
-    approvedAchievementsCount: unlockedAchievements.length,
     clubTasksCompleted: activeStudent.completedTasks || 0,
     clubAnnouncementsCount: 0,
     teacherEvaluationsCount: 0,
     libraryViewsCount: 0,
     specialRewardsCount: 0,
-    badgesEarnedCount: unlockedAchievements.length,
   });
 
   const currentStation = journeyRes.currentStation;
@@ -293,34 +288,6 @@ export const StudentProfileModal: React.FC<StudentProfileModalProps> = ({ studen
                 />
               </div>
             </div>
-          </div>
-
-          {/* Achievements Earned */}
-          <div className="space-y-3">
-            <div className="flex items-center gap-2">
-              <Award className="w-5 h-5 text-amber-600" />
-              <h3 className="font-black text-sm text-slate-900">الإنجازات المكتسبة ({unlockedAchievements.length})</h3>
-            </div>
-
-            {unlockedAchievements.length === 0 ? (
-              <div className="p-4 rounded-2xl bg-slate-50 border border-dashed border-slate-200 text-center text-xs font-bold text-slate-400">
-                لا توجد إنجازات مكتسبة بعد
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                {unlockedAchievements.map((ach) => (
-                  <div key={ach.id} className="p-3 rounded-2xl bg-amber-50/60 border border-amber-200/80 flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center font-bold text-sm shrink-0">
-                      {ach.icon || '🏆'}
-                    </div>
-                    <div>
-                      <h4 className="font-black text-xs text-slate-900">{ach.title}</h4>
-                      <p className="text-[10px] font-bold text-slate-500 line-clamp-1">{ach.description}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
 
           {/* Challenges Status */}

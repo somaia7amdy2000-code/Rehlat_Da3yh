@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { GraduationCap, School, Sparkles, ArrowRight, Lock, KeyRound, AlertCircle, Compass } from 'lucide-react';
+import { GraduationCap, School, Sparkles, ArrowRight, Lock, KeyRound, AlertCircle } from 'lucide-react';
 import { teacherService } from '../services/teacherService';
+import { isSupabaseConfigured } from '../lib/supabase';
 
 interface LandingPageProps {
   onSelectStudent: () => void;
@@ -24,14 +25,23 @@ export const LandingPage: React.FC<LandingPageProps> = ({
     setIsAuthenticating(true);
 
     try {
-      const isValid = await teacherService.validateTeacherCredentials(teacherName, teacherCode);
-      if (isValid) {
-        onTeacherAuthenticated();
+      if (isSupabaseConfigured) {
+        const result = await teacherService.loginTeacherWithSupabase(teacherName, teacherCode);
+        if (result.success) {
+          onTeacherAuthenticated();
+        } else {
+          setAuthError(result.error || 'البريد الإلكتروني أو كلمة المرور غير صحيحة');
+        }
       } else {
-        setAuthError('اسم المعلم أو الكود غير صحيح');
+        const isValid = await teacherService.validateTeacherCredentials(teacherName, teacherCode);
+        if (isValid) {
+          onTeacherAuthenticated();
+        } else {
+          setAuthError('اسم المعلم أو الكود غير صحيح');
+        }
       }
-    } catch (err) {
-      setAuthError('اسم المعلم أو الكود غير صحيح');
+    } catch (err: any) {
+      setAuthError(err?.message || 'حدث خطأ أثناء تسجيل الدخول');
     } finally {
       setIsAuthenticating(false);
     }
@@ -118,7 +128,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                       معلم
                     </h2>
                     <p className="text-xs font-bold text-slate-400 mt-1">
-                      بوابة المعلمات والمشرفات ومتابعة الإنجازات
+                      بوابة المعلمات والمشرفات وإدارة الحلقات
                     </p>
                   </div>
                 </motion.button>
@@ -170,22 +180,30 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
               <form onSubmit={handleTeacherSubmit} className="space-y-4">
                 <div className="space-y-1.5">
-                  <label className="text-xs font-black text-slate-300 block">اسم المعلم:</label>
+                  <label className="text-xs font-black text-slate-300 block">
+                    {isSupabaseConfigured ? 'البريد الإلكتروني:' : 'اسم المعلم:'}
+                  </label>
                   <input
-                    type="text"
+                    type={isSupabaseConfigured ? 'email' : 'text'}
                     required
                     value={teacherName}
                     onChange={(e) => {
                       setTeacherName(e.target.value);
                       if (authError) setAuthError('');
                     }}
-                    placeholder="أدخلي اسم المعلمة..."
+                    placeholder={
+                      isSupabaseConfigured
+                        ? 'أدخلي البريد الإلكتروني للمعلمة...'
+                        : 'أدخلي اسم المعلمة...'
+                    }
                     className="w-full px-4 py-3 rounded-2xl bg-slate-950 border border-slate-800 text-white placeholder-slate-500 text-xs font-bold focus:outline-none focus:border-teal-500 transition-colors"
                   />
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-xs font-black text-slate-300 block">كود المعلم:</label>
+                  <label className="text-xs font-black text-slate-300 block">
+                    {isSupabaseConfigured ? 'كلمة المرور:' : 'كود المعلم:'}
+                  </label>
                   <input
                     type="password"
                     required
@@ -194,7 +212,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                       setTeacherCode(e.target.value);
                       if (authError) setAuthError('');
                     }}
-                    placeholder="أدخلي كود المعلمة..."
+                    placeholder={
+                      isSupabaseConfigured ? 'أدخلي كلمة المرور...' : 'أدخلي كود المعلمة...'
+                    }
                     className="w-full px-4 py-3 rounded-2xl bg-slate-950 border border-slate-800 text-white placeholder-slate-500 text-xs font-bold focus:outline-none focus:border-teal-500 transition-colors"
                   />
                 </div>

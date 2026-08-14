@@ -20,7 +20,6 @@ import { BatchJourneyAnalyticsView } from './BatchJourneyAnalyticsView';
 import { BatchClassesView } from './BatchClassesView';
 import { BatchClubsView } from './BatchClubsView';
 import { BatchChallengesView } from './BatchChallengesView';
-import { BatchAchievementsView } from './BatchAchievementsView';
 import { BatchLibraryView } from './BatchLibraryView';
 import { BatchReportsView } from './BatchReportsView';
 import { SystemSettingsView } from './SystemSettingsView';
@@ -213,27 +212,37 @@ export const TeacherDashboard: React.FC<{ onLogout?: () => void }> = ({ onLogout
 
   const handleDeleteClub = async (clubId: string) => {
     if (!selectedBatch) return;
-    await teacherService.deleteClub(selectedBatch.id, clubId);
-    showToast(`🗑️ تم حذف النادي بنجاح`);
-    loadBatchData(selectedBatch.id);
-    loadBatches();
+    try {
+      await teacherService.deleteClub(selectedBatch.id, clubId);
+      showToast(`🗑️ تم حذف النادي بنجاح`);
+      await loadBatchData(selectedBatch.id);
+      await loadBatches();
+    } catch (err: any) {
+      console.error('Failed to delete club:', err);
+      showToast(`❌ ${err?.message || 'فشل حذف النادي'}`);
+      throw err;
+    }
   };
 
   // --- STUDENT HANDLERS ---
-  const handleAddStudent = async (data: { name: string; className: string; clubName?: string; levelBadge?: string }) => {
+  const handleAddStudent = async (data: { name: string; studentCode?: string; className: string; clubName?: string; levelBadge?: string }) => {
     if (!selectedBatch) return;
-    await teacherService.addStudent(selectedBatch.id, {
-      ...data,
-      points: 0,
-      levelBadge: '🌱 البداية',
-      completedTasks: 0,
-      completedChallengesCount: 0,
-      avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200',
-      status: 'active',
-    });
-    showToast(`✅ تم إضافة الطالب/الطالبة (${data.name}) للدفعة بنجاح`);
-    loadBatchData(selectedBatch.id);
-    loadBatches();
+    try {
+      await teacherService.addStudent(selectedBatch.id, {
+        ...data,
+        points: 0,
+        levelBadge: '🌱 البداية',
+        completedTasks: 0,
+        completedChallengesCount: 0,
+        avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200',
+        status: 'active',
+      });
+      showToast(`✅ تم إضافة الطالب/الطالبة (${data.name}) للدفعة بنجاح`);
+      loadBatchData(selectedBatch.id);
+      loadBatches();
+    } catch (err: any) {
+      showToast(`⚠️ ${err.message || 'فشل إضافة الطالب'}`);
+    }
   };
 
   const handleEditStudent = async (studentId: string, updates: Partial<BatchStudent>) => {
@@ -251,16 +260,21 @@ export const TeacherDashboard: React.FC<{ onLogout?: () => void }> = ({ onLogout
     loadBatches();
   };
 
-  const handleImportExcel = async (importedList: Array<{ name: string; className: string; clubName?: string; points?: number }>) => {
+  const handleImportExcel = async (importedList: Array<{ name: string; studentCode?: string; className: string; clubName?: string; points?: number }>) => {
     if (!selectedBatch) return;
-    await teacherService.importStudentsFromExcel(selectedBatch.id, importedList);
-    showToast(`📊 تم استيراد ${importedList.length} طلاب إلى الدفعة بنجاح!`);
-    loadBatchData(selectedBatch.id);
-    loadBatches();
+    try {
+      await teacherService.importStudentsFromExcel(selectedBatch.id, importedList);
+      showToast(`📊 تم استيراد ${importedList.length} طلاب إلى الدفعة بنجاح!`);
+      loadBatchData(selectedBatch.id);
+      loadBatches();
+    } catch (err: any) {
+      showToast(`⚠️ ${err.message || 'فشل استيراد الطلاب'}`);
+    }
   };
 
   const handleCreateChallenge = async (data: {
     title: string;
+    description?: string;
     type: string;
     rewardXp: number;
     dueDate: string;
@@ -270,13 +284,19 @@ export const TeacherDashboard: React.FC<{ onLogout?: () => void }> = ({ onLogout
     targetStudentCode?: string;
   }) => {
     if (!selectedBatch) return;
-    await teacherService.createChallenge(selectedBatch.id, {
-      ...data,
-      status: 'active',
-      participantsCount: 0,
-    });
-    showToast(`🎉 تم نشر التحدي الجديد (${data.title}) للمستهدفين بنجاح`);
-    loadBatchData(selectedBatch.id);
+    try {
+      await teacherService.createChallenge(selectedBatch.id, {
+        ...data,
+        status: 'active',
+        participantsCount: 0,
+      });
+      showToast(`🎉 تم نشر التحدي الجديد (${data.title}) للمستهدفين بنجاح`);
+      loadBatchData(selectedBatch.id);
+    } catch (err: any) {
+      console.error('Failed to create challenge:', err);
+      showToast(`❌ ${err?.message || 'فشل نشر التحدي'}`);
+      throw err;
+    }
   };
 
   const handleAddAnnouncement = async (data: {
@@ -301,21 +321,35 @@ export const TeacherDashboard: React.FC<{ onLogout?: () => void }> = ({ onLogout
     loadBatchData(selectedBatch.id);
   };
 
-  const handleCreateClub = async (data: { name: string; supervisorName: string; category: string }) => {
+  const handleCreateClub = async (data: {
+    name: string;
+    supervisorName: string;
+    category: string;
+    selectedStudentIds?: string[];
+  }) => {
     if (!selectedBatch) return;
-    await teacherService.createClub(selectedBatch.id, {
-      ...data,
-      description: 'نادي جديد لتنمية المواهب والإبداع بالدفعة',
-      memberCount: 0,
-      activeTasksCount: 0,
-      members: [],
-      tasks: [],
-      announcements: [],
-      achievements: [],
-    });
-    showToast(`✨ تم تأسيس النادي الجديد (${data.name}) بالدفعة`);
-    loadBatchData(selectedBatch.id);
-    loadBatches();
+    const { selectedStudentIds, ...clubDetails } = data;
+    try {
+      await teacherService.createClub(
+        selectedBatch.id,
+        {
+          ...clubDetails,
+          description: `نادي ${data.name} لتنمية المواهب والإبداع بالدفعة`,
+          memberCount: 0,
+          activeTasksCount: 0,
+          members: [],
+          tasks: [],
+          announcements: [],
+        },
+        selectedStudentIds || []
+      );
+      showToast(`✨ تم تأسيس النادي الجديد (${data.name}) بالدفعة`);
+      loadBatchData(selectedBatch.id);
+      loadBatches();
+    } catch (err: any) {
+      console.error('Error in handleCreateClub:', err);
+      showToast(`❌ فشل إنشاء النادي: ${err?.message || 'خطأ غير معروف'}`);
+    }
   };
 
   const handleUploadLibrary = async (data: {
@@ -500,6 +534,7 @@ export const TeacherDashboard: React.FC<{ onLogout?: () => void }> = ({ onLogout
                     clubs={clubs}
                     challenges={challenges}
                     submissions={pendingSubmissions}
+                    students={students}
                     onOpenCreateClub={() => {
                       setPresetChallengeClubName(null);
                       setIsCreateClubOpen(true);
@@ -509,6 +544,29 @@ export const TeacherDashboard: React.FC<{ onLogout?: () => void }> = ({ onLogout
                       setPresetChallengeClubName(clubName);
                       setIsCreateChallengeOpen(true);
                     }}
+                    onAddMemberToClub={async (clubId, studentId) => {
+                      if (!selectedBatch) return;
+                      try {
+                        await teacherService.addClubMember(selectedBatch.id, clubId, studentId);
+                        showToast('🎉 تم إضافة الطالبة للنادي بنجاح');
+                        await loadBatchData(selectedBatch.id);
+                      } catch (err: any) {
+                        console.error('Failed to add member to club:', err);
+                        showToast(`❌ ${err?.message || 'فشل إضافة الطالبة للنادي'}`);
+                      }
+                    }}
+                    onRemoveMemberFromClub={async (clubId, studentId) => {
+                      if (!selectedBatch) return;
+                      try {
+                        await teacherService.removeClubMember(selectedBatch.id, clubId, studentId);
+                        showToast('🗑️ تم إزالة الطالبة من النادي بنجاح');
+                        await loadBatchData(selectedBatch.id);
+                      } catch (err: any) {
+                        console.error('Failed to remove member from club:', err);
+                        showToast(`❌ ${err?.message || 'فشل إزالة الطالبة من النادي'}`);
+                      }
+                    }}
+                    onDeleteClub={handleDeleteClub}
                   />
                 )}
 
@@ -586,6 +644,7 @@ export const TeacherDashboard: React.FC<{ onLogout?: () => void }> = ({ onLogout
         onImportExcel={handleImportExcel}
         classesList={classes.map((c) => c.name)}
         clubsList={clubs.map((c) => c.name)}
+        initialMode="manual"
       />
 
       <CreateChallengeModal
@@ -596,7 +655,7 @@ export const TeacherDashboard: React.FC<{ onLogout?: () => void }> = ({ onLogout
         }}
         onSubmit={handleCreateChallenge}
         classesList={classes.map((c) => c.name)}
-        clubsList={clubs.map((c) => c.name)}
+        clubsList={clubs.map((c) => ({ id: c.id, name: c.name }))}
         studentsList={students.map((s) => ({
           id: s.id,
           name: s.name,
@@ -628,6 +687,8 @@ export const TeacherDashboard: React.FC<{ onLogout?: () => void }> = ({ onLogout
         isOpen={isCreateClubOpen}
         onClose={() => setIsCreateClubOpen(false)}
         onSubmit={handleCreateClub}
+        classes={classes}
+        students={students}
       />
 
       <UploadLibraryModal

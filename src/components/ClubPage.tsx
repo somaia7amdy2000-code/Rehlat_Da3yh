@@ -12,7 +12,6 @@ import {
   ClubAnnouncement,
   ClubTask,
   ClubMember,
-  ClubAchievement,
   ClubFile,
   SupervisorMessage,
   ClubFileType,
@@ -34,7 +33,101 @@ interface ClubPageProps {
   refreshContext?: () => void;
   onRewardEarned?: (xp: number) => void;
   triggerConfetti?: () => void;
+  debugInfo?: any;
+  studentContext?: any;
 }
+
+export const StudentClubDebugPanel: React.FC<{
+  debugInfo?: any;
+  studentContext?: any;
+  currentClub?: any;
+}> = ({ debugInfo, studentContext, currentClub }) => {
+  const dbg = debugInfo || studentContext?.debugInfo || {};
+  return (
+    <div className="bg-slate-900 text-slate-100 p-6 rounded-3xl border-4 border-rose-500 font-mono text-sm space-y-4 my-8 dir-ltr text-left shadow-2xl">
+      <div className="flex items-center justify-between border-b border-rose-500/40 pb-3">
+        <h3 className="text-rose-400 font-black text-xl tracking-wider">
+          DEBUG — Student Club Data
+        </h3>
+        <span className="bg-rose-500/20 text-rose-300 px-3 py-1 rounded-full text-xs font-bold border border-rose-500/40">
+          Diagnostic Mode
+        </span>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+        <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700">
+          <span className="text-slate-400 block font-bold mb-1">Supabase configured:</span>
+          <span className="text-amber-300 font-bold text-sm">{String(dbg.isSupabaseConfigured ?? 'unknown')}</span>
+        </div>
+
+        <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700">
+          <span className="text-slate-400 block font-bold mb-1">1. studentId (input):</span>
+          <span className="text-emerald-300 font-bold text-sm">{dbg.studentId || 'null'}</span>
+        </div>
+
+        <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700">
+          <span className="text-slate-400 block font-bold mb-1">2. supaStudent.id:</span>
+          <span className="text-emerald-300 font-bold text-sm">{dbg.supaStudentId || 'null'}</span>
+        </div>
+
+        <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700">
+          <span className="text-slate-400 block font-bold mb-1">3a. memberData exists:</span>
+          <span className="text-sky-300 font-bold text-sm">{String(dbg.hasMemberData ?? false)}</span>
+        </div>
+
+        <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700">
+          <span className="text-slate-400 block font-bold mb-1">3b. memberData.club_id:</span>
+          <span className="text-sky-300 font-bold text-sm">{dbg.memberDataClubId || 'null'}</span>
+        </div>
+
+        <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700 col-span-1 md:col-span-2">
+          <span className="text-slate-400 block font-bold mb-1">3c. memberData.clubs:</span>
+          <pre className="bg-slate-900 p-2 rounded text-amber-200 text-[11px] overflow-x-auto whitespace-pre-wrap">{dbg.memberDataClubs || 'null'}</pre>
+        </div>
+
+        <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700 col-span-1 md:col-span-2">
+          <span className="text-slate-400 block font-bold mb-1">3d. query error:</span>
+          <span className="text-rose-300 font-bold text-sm">{dbg.memberQueryError || 'none'}</span>
+        </div>
+
+        <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700">
+          <span className="text-slate-400 block font-bold mb-1">4a. clubObj.id:</span>
+          <span className="text-purple-300 font-bold text-sm">{dbg.clubObjId || 'null'}</span>
+        </div>
+
+        <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700">
+          <span className="text-slate-400 block font-bold mb-1">4b. clubObj.name:</span>
+          <span className="text-purple-300 font-bold text-sm">{dbg.clubObjName || 'null'}</span>
+        </div>
+
+        <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700">
+          <span className="text-slate-400 block font-bold mb-1">5a. student.clubId:</span>
+          <span className="text-teal-300 font-bold text-sm">{studentContext?.student?.clubId || dbg.studentClubId || 'undefined'}</span>
+        </div>
+
+        <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700">
+          <span className="text-slate-400 block font-bold mb-1">5b. student.clubName:</span>
+          <span className="text-teal-300 font-bold text-sm">{studentContext?.student?.clubName || dbg.studentClubName || 'undefined'}</span>
+        </div>
+
+        <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700 col-span-1 md:col-span-2">
+          <span className="text-slate-400 block font-bold mb-1">5c. supaClubItem:</span>
+          <pre className="bg-slate-900 p-2 rounded text-emerald-200 text-[11px] overflow-x-auto whitespace-pre-wrap">{dbg.supaClubItem || 'null'}</pre>
+        </div>
+
+        <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700 col-span-1 md:col-span-2">
+          <span className="text-slate-400 block font-bold mb-1">5d. studentContext.clubItem:</span>
+          <pre className="bg-slate-900 p-2 rounded text-emerald-200 text-[11px] overflow-x-auto whitespace-pre-wrap">{JSON.stringify(studentContext?.clubItem || null, null, 2)}</pre>
+        </div>
+
+        <div className="bg-slate-800/80 p-3 rounded-xl border border-slate-700 col-span-1 md:col-span-2">
+          <span className="text-slate-400 block font-bold mb-1">5e. currentClub (in YouthMainApp):</span>
+          <pre className="bg-slate-900 p-2 rounded text-teal-200 text-[11px] overflow-x-auto whitespace-pre-wrap">{JSON.stringify(currentClub || null, null, 2)}</pre>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 export const ClubPage: React.FC<ClubPageProps> = ({
   currentClub,
@@ -49,13 +142,14 @@ export const ClubPage: React.FC<ClubPageProps> = ({
   refreshContext,
   onRewardEarned,
   triggerConfetti,
+  debugInfo,
+  studentContext,
 }) => {
   // State from dynamic service layer
   const [clubInfo, setClubInfo] = useState<ClubInfo | null>(null);
   const [announcements, setAnnouncements] = useState<ClubAnnouncement[]>([]);
   const [tasks, setTasks] = useState<ClubTask[]>([]);
   const [members, setMembers] = useState<ClubMember[]>([]);
-  const [achievements, setAchievements] = useState<ClubAchievement[]>([]);
   const [files, setFiles] = useState<ClubFile[]>([]);
   const [supervisorMsg, setSupervisorMsg] = useState<SupervisorMessage | null>(null);
 
@@ -78,8 +172,8 @@ export const ClubPage: React.FC<ClubPageProps> = ({
             name: currentClub.name,
             slogan: currentClub.description || 'معًا نلتقي للتعلم والتميز الإيماني.',
             description: currentClub.description || 'نادي نشاط مخصص للدفعة.',
-            supervisorName: currentClub.supervisorName || 'معلمة الحلقة',
-            supervisorTitle: 'مشرفة النادي',
+            supervisorName: currentClub.supervisorName || 'معلم الحلقة',
+            supervisorTitle: 'مشرف النادي',
             memberCount: currentClub.memberCount || 0,
             gradeLevel: batch?.stage || 'المرحلة العامة',
             stage: batch?.stage || 'المرحلة العامة',
@@ -126,14 +220,13 @@ export const ClubPage: React.FC<ClubPageProps> = ({
               description: ch.description || '',
               xp_reward: ch.rewardXp,
               due_date: ch.dueDate || 'نشط',
-              assigned_by: 'معلمة الحلقة',
+              assigned_by: 'معلم الحلقة',
               status,
             };
           });
 
-          const [annRes, achRes, filesRes, msgRes] = await Promise.all([
+          const [annRes, filesRes, msgRes] = await Promise.all([
             clubService.getAnnouncements(),
-            clubService.getClubAchievements(),
             clubService.getClubFiles(),
             clubService.getSupervisorMessage(),
           ]);
@@ -143,7 +236,6 @@ export const ClubPage: React.FC<ClubPageProps> = ({
             setAnnouncements(annRes);
             setTasks(mappedClubTasks);
             setMembers(clubMembersMapped);
-            setAchievements(achRes);
             setFiles(filesRes);
             setSupervisorMsg(msgRes);
           }
@@ -198,7 +290,7 @@ export const ClubPage: React.FC<ClubPageProps> = ({
         prev.map((t) => (t.id === task.id ? { ...t, status: 'submitted' } : t))
       );
       setProofSubmissionModal(null);
-      showToast('⏳ تم إرسال إثبات الإنجاز لمعلمة الحلقة بنجاح! بانتظار المراجعة.');
+      showToast('⏳ تم إرسال إثبات الإنجاز للمعلم بنجاح! بانتظار المراجعة.');
       refreshContext?.();
     } catch (err) {
       console.error('Task submit error:', err);
@@ -254,12 +346,18 @@ export const ClubPage: React.FC<ClubPageProps> = ({
     );
   }
 
+  console.log('[TRACE ClubPage] clubInfo:', clubInfo);
+  console.log('[TRACE ClubPage] currentClub:', currentClub);
+
   if (!clubInfo || !clubInfo.name) {
     return (
-      <div className="bg-white/90 rounded-[32px] p-12 text-center border border-dashed border-slate-200 space-y-3 dir-rtl my-8">
-        <Users className="w-16 h-16 text-slate-300 mx-auto" />
-        <h3 className="font-black text-lg text-slate-800">لم يتم انضمامك إلى أي نادٍ بعد.</h3>
-        <p className="text-xs font-bold text-slate-400">ستظهر تفاصيل النادي والمهام والإعلانات فور انضمامك لأحد الأندية من قبل المعلمة.</p>
+      <div className="space-y-6 dir-rtl my-8">
+        <div className="bg-white/90 rounded-[32px] p-12 text-center border border-dashed border-slate-200 space-y-3">
+          <Users className="w-16 h-16 text-slate-300 mx-auto" />
+          <h3 className="font-black text-lg text-slate-800">لم تنضم إلى أي نادٍ بعد.</h3>
+          <p className="text-xs font-bold text-slate-400">ستظهر تفاصيل النادي والمهام والإعلانات فور انضمامك لأحد الأندية من قبل المعلم.</p>
+        </div>
+        <StudentClubDebugPanel debugInfo={debugInfo} studentContext={studentContext} currentClub={currentClub} />
       </div>
     );
   }
@@ -312,7 +410,7 @@ export const ClubPage: React.FC<ClubPageProps> = ({
             {/* Club Name & Slogan */}
             <div className="space-y-2">
               <h1 className="text-2xl sm:text-3xl font-black text-white tracking-tight flex items-center gap-3">
-                <span>{clubInfo?.name || '🌿 نادي الإذاعة'}</span>
+                <span>{clubInfo?.name || '🌿 النادي'}</span>
               </h1>
               <p className="text-sm sm:text-base font-bold text-teal-100/90 leading-relaxed max-w-xl">
                 "{clubInfo?.slogan || 'معًا ننشر الخير بالكلمة الطيبة.'}"
@@ -524,14 +622,14 @@ export const ClubPage: React.FC<ClubPageProps> = ({
                     {isSubmitted && (
                       <div className="w-full py-2 px-3 rounded-xl bg-amber-100/80 text-amber-900 border border-amber-300 font-extrabold text-xs flex items-center justify-center gap-2">
                         <Clock className="w-3.5 h-3.5 text-amber-700 animate-spin" />
-                        <span>بانتظار مراجعة المعلمة</span>
+                        <span>بانتظار مراجعة المعلم</span>
                       </div>
                     )}
 
                     {isApproved && (
                       <div className="w-full py-2 px-3 rounded-xl bg-emerald-100/80 text-emerald-900 border border-emerald-300 font-extrabold text-xs flex items-center justify-center gap-2">
                         <CheckCircle2 className="w-3.5 h-3.5 text-emerald-700" />
-                        <span>مكتمل ومعتمد من المعلمة ✅</span>
+                        <span>مكتمل ومعتمد من المعلم ✅</span>
                       </div>
                     )}
                   </div>
@@ -620,60 +718,7 @@ export const ClubPage: React.FC<ClubPageProps> = ({
       )}
     </section>
 
-      {/* ================= 5. SECTION: 🏆 إنجازات النادي ================= */}
-      <section className="space-y-4">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center">
-            <Award className="w-4 h-4" />
-          </div>
-          <h2 className="text-lg font-black text-slate-900">إنجازات النادي 🏆</h2>
-        </div>
 
-        {achievements.length === 0 ? (
-          <div className="bg-white/90 rounded-[24px] p-6 text-center border border-[#EEF2F7]">
-            <p className="text-xs font-bold text-slate-500">لا توجد إنجازات للنادي حالياً.</p>
-          </div>
-        ) : (
-          <div className="relative pr-4 space-y-6 before:absolute before:right-2 before:top-2 before:bottom-2 before:w-0.5 before:bg-gradient-to-b before:from-amber-400 before:via-teal-400 before:to-emerald-400">
-            {achievements.map((ach) => (
-              <motion.div
-                key={ach.id}
-                whileHover={{ x: -3 }}
-                className="relative pr-6 space-y-1.5"
-              >
-                {/* Timeline Bullet Node */}
-                <div className="absolute -right-[9px] top-1.5 w-4 h-4 rounded-full bg-amber-400 border-2 border-white shadow-md shadow-amber-400/40" />
-
-                <div className="bg-white/90 border border-[#EEF2F7] shadow-[0_8px_25px_rgb(0,0,0,0.03)] rounded-[24px] p-4 sm:p-5 space-y-2">
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <div className="flex items-center gap-2">
-                      <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
-                      <h3 className="font-extrabold text-sm text-slate-900">{ach.title}</h3>
-                    </div>
-                    <span className="px-2.5 py-0.5 text-[10px] font-black rounded-full bg-amber-50 text-amber-900 border border-amber-200">
-                      {ach.badgeTag}
-                    </span>
-                  </div>
-
-                  <p className="text-xs font-bold text-slate-600 leading-relaxed">
-                    {ach.description}
-                  </p>
-
-                  <div className="flex items-center justify-between text-[10px] font-bold text-slate-400 pt-2 border-t border-slate-100">
-                    <span className="text-teal-700 bg-teal-50 px-2 py-0.5 rounded-md border border-teal-100">
-                      {ach.category}
-                    </span>
-                    <div className="flex items-center gap-1">
-                      <Calendar className="w-3 h-3 text-slate-400" />
-                      <span>{ach.date}</span>
-                    </div>
-                  </div>
-                </div>
-              </motion.div>
-            ))}
-          </div>
-        )}
-      </section>
 
       {/* ================= 6. SECTION: 📂 ملفات النادي ================= */}
       <section className="space-y-4">
@@ -726,53 +771,7 @@ export const ClubPage: React.FC<ClubPageProps> = ({
         )}
       </section>
 
-      {/* ================= 7. SECTION: ❤️ رسالة المشرفة ================= */}
-      <section className="pt-2">
-        {supervisorMsg && (
-          <motion.div
-            initial={{ opacity: 0, y: 15 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="rounded-[32px] p-6 sm:p-8 bg-gradient-to-br from-rose-500/10 via-amber-500/10 to-teal-500/10 border border-rose-200/60 shadow-lg shadow-rose-500/5 space-y-4 relative overflow-hidden"
-          >
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-xl bg-rose-500 text-white flex items-center justify-center shadow-md shadow-rose-500/30">
-                  <Heart className="w-4 h-4 fill-white" />
-                </div>
-                <h2 className="text-lg font-black text-slate-900">رسالة المشرفة ❤️</h2>
-              </div>
-              <span className="text-[10px] font-black text-rose-700 bg-rose-100/80 px-2.5 py-1 rounded-full border border-rose-200">
-                كلمات ملهمة
-              </span>
-            </div>
 
-            <p className="text-sm sm:text-base font-bold text-slate-800 leading-relaxed italic bg-white/80 backdrop-blur-md p-4 sm:p-5 rounded-2xl border border-rose-100">
-              "{supervisorMsg.message}"
-            </p>
-
-            <div className="flex items-center justify-between pt-2">
-              <div className="flex items-center gap-3">
-                {supervisorMsg.supervisorAvatar ? (
-                  <img
-                    src={supervisorMsg.supervisorAvatar}
-                    alt={supervisorMsg.supervisorName}
-                    className="w-10 h-10 rounded-2xl object-cover border-2 border-rose-200"
-                  />
-                ) : (
-                  <div className="w-10 h-10 rounded-2xl bg-rose-100 text-rose-700 font-bold flex items-center justify-center text-xs">
-                    {supervisorMsg.supervisorName ? supervisorMsg.supervisorName.charAt(0) : 'م'}
-                  </div>
-                )}
-                <div>
-                  <h3 className="text-xs font-black text-slate-900">{supervisorMsg.supervisorName}</h3>
-                  <p className="text-[10px] font-bold text-slate-500">{supervisorMsg.supervisorTitle}</p>
-                </div>
-              </div>
-              <span className="text-[10px] font-bold text-slate-400">{supervisorMsg.date}</span>
-            </div>
-          </motion.div>
-        )}
-      </section>
 
       {/* ================= FILE MODAL PREVIEW ================= */}
       <AnimatePresence>
@@ -870,7 +869,7 @@ export const ClubPage: React.FC<ClubPageProps> = ({
 
                 <div className="space-y-1">
                   <label className="block text-xs font-black text-slate-700">
-                    ماذا فعلتِ لإنجاز هذا التحدي؟ (تفاصيل أو ملحوظة للمعلمة):
+                    ماذا فعلت لإنجاز هذا التحدي؟ (تفاصيل أو ملحوظة للمعلم):
                   </label>
                   <textarea
                     rows={3}
@@ -903,6 +902,8 @@ export const ClubPage: React.FC<ClubPageProps> = ({
           </div>
         )}
       </AnimatePresence>
+
+      <StudentClubDebugPanel debugInfo={debugInfo} studentContext={studentContext} currentClub={currentClub} />
     </div>
   );
 };

@@ -81,10 +81,10 @@ export const AddStudentModal: React.FC<AddStudentModalProps> = ({
       const defaultClass3 = classesList[2] || defaultClass2;
 
       setPreviewRows([
-        { name: 'مريم خليل الزهراني', studentCode: 'STU-101', className: defaultClass1, clubName: 'بدون نادي', points: 0 },
-        { name: 'هند سليمان المطيري', studentCode: 'STU-102', className: defaultClass1, clubName: 'بدون نادي', points: 0 },
-        { name: 'ندى عبد الرحمن القحطاني', studentCode: 'STU-103', className: defaultClass2, clubName: 'بدون نادي', points: 0 },
-        { name: 'أبرار محمد العتيبي', studentCode: 'STU-104', className: defaultClass3, clubName: 'بدون نادي', points: 0 },
+        { name: 'مريم خليل الزهراني', studentCode: '1', className: defaultClass1, clubName: 'بدون نادي', points: 0 },
+        { name: 'هند سليمان المطيري', studentCode: '2', className: defaultClass1, clubName: 'بدون نادي', points: 0 },
+        { name: 'ندى عبد الرحمن القحطاني', studentCode: '1', className: defaultClass2, clubName: 'بدون نادي', points: 0 },
+        { name: 'أبرار محمد العتيبي', studentCode: '1', className: defaultClass3, clubName: 'بدون نادي', points: 0 },
       ]);
     }
   }, [isOpen, classesList, initialMode]);
@@ -109,7 +109,7 @@ export const AddStudentModal: React.FC<AddStudentModalProps> = ({
     if (!name.trim()) return;
     onSubmit({
       name: name.trim(),
-      studentCode: studentCode.trim() || `STU-${Math.floor(100 + Math.random() * 900)}`,
+      studentCode: studentCode.trim(),
       className,
       clubName,
       levelBadge,
@@ -152,7 +152,7 @@ export const AddStudentModal: React.FC<AddStudentModalProps> = ({
               const cols = line.split(/[,;\t]/).map((c) => c.replace(/^["']|["']$/g, '').trim());
               return {
                 name: cols[0] || `طالب جديد ${idx + 1}`,
-                studentCode: cols[1] || `STU-${100 + idx}`,
+                studentCode: cols[1] || `${idx + 1}`,
                 className: cols[2] || classesList[0] || 'الفصل E',
                 clubName: cols[3] || 'بدون نادي',
                 points: Number(cols[4]) || 0,
@@ -459,11 +459,12 @@ interface CreateChallengeModalProps {
     dueDate: string;
     targetType: ChallengeTargetAudience;
     targetName?: string;
+    targetId?: string;
     targetStudentId?: string;
     targetStudentCode?: string;
   }) => void;
   classesList?: string[];
-  clubsList?: string[];
+  clubsList?: Array<{ id: string; name: string } | string>;
   studentsList?: Array<{ id: string; name: string; studentCode?: string; className?: string }>;
   initialTargetType?: ChallengeTargetAudience;
   initialTargetName?: string;
@@ -486,27 +487,41 @@ export const CreateChallengeModal: React.FC<CreateChallengeModalProps> = ({
   const [dueDate, setDueDate] = useState('خلال 3 أيام');
   const [targetType, setTargetType] = useState<ChallengeTargetAudience>('school');
   const [targetName, setTargetName] = useState('');
+  const [targetClubId, setTargetClubId] = useState('');
   const [targetStudentId, setTargetStudentId] = useState('');
   const [targetStudentCode, setTargetStudentCode] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const normalizedClubs = React.useMemo(() => {
+    return (clubsList || []).map((c) =>
+      typeof c === 'string' ? { id: '', name: c } : c
+    );
+  }, [clubsList]);
 
   React.useEffect(() => {
     if (isOpen) {
+      setErrorMessage(null);
       if (initialTargetType) {
         setTargetType(initialTargetType);
         if (initialTargetName) {
           setTargetName(initialTargetName);
-        } else if (initialTargetType === 'club' && clubsList.length > 0) {
-          setTargetName(clubsList[0]);
+          const found = normalizedClubs.find((c) => c.name === initialTargetName);
+          if (found) setTargetClubId(found.id || '');
+        } else if (initialTargetType === 'club' && normalizedClubs.length > 0) {
+          setTargetName(normalizedClubs[0].name || '');
+          setTargetClubId(normalizedClubs[0].id || '');
         }
       }
     }
-  }, [isOpen, initialTargetType, initialTargetName, clubsList]);
+  }, [isOpen, initialTargetType, initialTargetName, normalizedClubs]);
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title.trim()) return;
+    if (!title.trim() || isSubmitting) return;
+    setErrorMessage(null);
 
     let computedName = targetName;
     if (targetType === 'school') computedName = 'المدرسة بأكملها';
@@ -518,20 +533,30 @@ export const CreateChallengeModal: React.FC<CreateChallengeModalProps> = ({
       }
     }
 
-    onSubmit({
-      title,
-      description,
-      type,
-      rewardXp,
-      dueDate,
-      targetType,
-      targetName: computedName,
-      targetStudentId,
-      targetStudentCode,
-    });
-    setTitle('');
-    setDescription('');
-    onClose();
+    try {
+      setIsSubmitting(true);
+      await onSubmit({
+        title,
+        description,
+        type,
+        rewardXp,
+        dueDate,
+        targetType,
+        targetName: computedName,
+        targetId: targetType === 'club' ? targetClubId : undefined,
+        targetStudentId,
+        targetStudentCode,
+      });
+      setTitle('');
+      setDescription('');
+      setErrorMessage(null);
+      onClose();
+    } catch (err: any) {
+      console.error('Failed to create challenge:', err);
+      setErrorMessage(err?.message || 'حدث خطأ أثناء حفظ التحدي في قاعدة البيانات');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -552,6 +577,13 @@ export const CreateChallengeModal: React.FC<CreateChallengeModalProps> = ({
               <X className="w-5 h-5" />
             </button>
           </div>
+
+          {errorMessage && (
+            <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 text-xs font-bold rounded-xl flex items-center gap-2">
+              <span>⚠️</span>
+              <span>{errorMessage}</span>
+            </div>
+          )}
 
           <form onSubmit={handleSubmit} className="space-y-4 text-xs font-bold text-slate-700">
             <div>
@@ -658,7 +690,10 @@ export const CreateChallengeModal: React.FC<CreateChallengeModalProps> = ({
                   type="button"
                   onClick={() => {
                     setTargetType('club');
-                    if (clubsList.length > 0) setTargetName(clubsList[0]);
+                    if (normalizedClubs.length > 0) {
+                      setTargetName(normalizedClubs[0].name);
+                      setTargetClubId(normalizedClubs[0].id);
+                    }
                   }}
                   className={`p-2.5 rounded-xl text-center border font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
                     targetType === 'club'
@@ -710,16 +745,24 @@ export const CreateChallengeModal: React.FC<CreateChallengeModalProps> = ({
                 <div className="mt-2">
                   <label className="block mb-1 text-slate-700">اختر النادي المستهدف:</label>
                   <select
-                    value={targetName}
-                    onChange={(e) => setTargetName(e.target.value)}
+                    value={targetClubId || targetName}
+                    onChange={(e) => {
+                      const selected = normalizedClubs.find((c) => c.id === e.target.value || c.name === e.target.value);
+                      if (selected) {
+                        setTargetName(selected.name);
+                        setTargetClubId(selected.id);
+                      } else {
+                        setTargetName(e.target.value);
+                      }
+                    }}
                     className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 font-bold text-slate-900"
                   >
-                    {clubsList.length === 0 ? (
+                    {normalizedClubs.length === 0 ? (
                       <option value="">لا توجد أندية تم إنشاؤها بعد</option>
                     ) : (
-                      clubsList.map((clb) => (
-                        <option key={clb} value={clb}>
-                          {clb}
+                      normalizedClubs.map((clb) => (
+                        <option key={clb.id || clb.name} value={clb.id || clb.name}>
+                          {clb.name}
                         </option>
                       ))
                     )}
@@ -780,9 +823,10 @@ export const CreateChallengeModal: React.FC<CreateChallengeModalProps> = ({
               </button>
               <button
                 type="submit"
-                className="px-5 py-2.5 rounded-xl bg-amber-600 text-white font-black hover:bg-amber-700 shadow-md shadow-amber-600/20"
+                disabled={isSubmitting}
+                className="px-5 py-2.5 rounded-xl bg-amber-600 text-white font-black hover:bg-amber-700 shadow-md shadow-amber-600/20 disabled:opacity-50"
               >
-                نشر التحدي
+                {isSubmitting ? 'جاري النشر...' : 'نشر التحدي'}
               </button>
             </div>
           </form>
@@ -1150,21 +1194,89 @@ export const AddAnnouncementModal: React.FC<AddAnnouncementModalProps> = ({
 interface CreateClubModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (data: { name: string; supervisorName: string; category: string }) => void;
+  onSubmit: (data: {
+    name: string;
+    supervisorName: string;
+    category: string;
+    selectedStudentIds?: string[];
+  }) => void;
+  classes?: BatchClass[];
+  students?: BatchStudent[];
 }
 
-export const CreateClubModal: React.FC<CreateClubModalProps> = ({ isOpen, onClose, onSubmit }) => {
+export const CreateClubModal: React.FC<CreateClubModalProps> = ({
+  isOpen,
+  onClose,
+  onSubmit,
+  classes = [],
+  students = [],
+}) => {
   const [name, setName] = useState('');
   const [supervisorName, setSupervisorName] = useState('أ. مشرف النادي');
   const [category, setCategory] = useState('أنشطة ثقافية وإعلامية');
+  const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
+  const [activeClassName, setActiveClassName] = useState<string>('');
+
+  useEffect(() => {
+    if (isOpen) {
+      if (classes.length > 0 && !activeClassName) {
+        setActiveClassName(classes[0].name);
+      }
+    } else {
+      setName('');
+      setSupervisorName('أ. مشرف النادي');
+      setCategory('أنشطة ثقافية وإعلامية');
+      setSelectedStudentIds([]);
+      setActiveClassName('');
+    }
+  }, [isOpen, classes]);
 
   if (!isOpen) return null;
+
+  const currentClassStudents = students.filter(
+    (s) => s.className === activeClassName
+  );
+
+  const toggleStudent = (studentId: string) => {
+    setSelectedStudentIds((prev) =>
+      prev.includes(studentId)
+        ? prev.filter((id) => id !== studentId)
+        : [...prev, studentId]
+    );
+  };
+
+  const isAllClassSelected =
+    currentClassStudents.length > 0 &&
+    currentClassStudents.every((s) => selectedStudentIds.includes(s.id));
+
+  const toggleSelectAllClass = () => {
+    const classIds = currentClassStudents.map((s) => s.id);
+    if (isAllClassSelected) {
+      setSelectedStudentIds((prev) => prev.filter((id) => !classIds.includes(id)));
+    } else {
+      setSelectedStudentIds((prev) => Array.from(new Set([...prev, ...classIds])));
+    }
+  };
+
+  const removeStudent = (studentId: string) => {
+    setSelectedStudentIds((prev) => prev.filter((id) => id !== studentId));
+  };
+
+  const selectedStudentsList = selectedStudentIds
+    .map((id) => students.find((s) => s.id === id))
+    .filter((s): s is BatchStudent => Boolean(s));
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
-    onSubmit({ name, supervisorName, category });
+    onSubmit({
+      name,
+      supervisorName,
+      category,
+      selectedStudentIds,
+    });
     setName('');
+    setSelectedStudentIds([]);
     onClose();
   };
 
@@ -1175,14 +1287,14 @@ export const CreateClubModal: React.FC<CreateClubModalProps> = ({ isOpen, onClos
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
           exit={{ opacity: 0, scale: 0.95 }}
-          className="w-full max-w-md bg-white rounded-[28px] p-6 shadow-2xl border border-slate-100 space-y-5"
+          className="w-full max-w-xl bg-white rounded-[28px] p-6 shadow-2xl border border-slate-100 space-y-5 max-h-[90vh] overflow-y-auto scrollbar-thin"
         >
           <div className="flex items-center justify-between border-b border-slate-100 pb-4">
             <div className="flex items-center gap-2 text-emerald-700">
               <Sparkles className="w-5 h-5" />
               <h3 className="font-black text-lg text-slate-900">تأسيس نادي جديد بالدفعة</h3>
             </div>
-            <button onClick={onClose} className="p-1 rounded-xl hover:bg-slate-100 text-slate-400">
+            <button onClick={onClose} className="p-1.5 rounded-xl hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors">
               <X className="w-5 h-5" />
             </button>
           </div>
@@ -1200,43 +1312,224 @@ export const CreateClubModal: React.FC<CreateClubModalProps> = ({ isOpen, onClos
               />
             </div>
 
-            <div>
-              <label className="block mb-1 text-slate-800">المشرف على النادي</label>
-              <input
-                type="text"
-                required
-                value={supervisorName}
-                onChange={(e) => setSupervisorName(e.target.value)}
-                placeholder="أ. فاطمة أحمد"
-                className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 font-bold text-slate-900"
-              />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block mb-1 text-slate-800">المشرف على النادي</label>
+                <input
+                  type="text"
+                  required
+                  value={supervisorName}
+                  onChange={(e) => setSupervisorName(e.target.value)}
+                  placeholder="أ. فاطمة أحمد"
+                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 font-bold text-slate-900"
+                />
+              </div>
+
+              <div>
+                <label className="block mb-1 text-slate-800">مجال النادي</label>
+                <input
+                  type="text"
+                  required
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                  placeholder="الأنشطة الإعلامية / الترتيل والتجويد"
+                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 font-bold text-slate-900"
+                />
+              </div>
             </div>
 
-            <div>
-              <label className="block mb-1 text-slate-800">مجال النادي</label>
-              <input
-                type="text"
-                required
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
-                placeholder="الأنشطة الإعلامية / الترتيل والتجويد"
-                className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 font-bold text-slate-900"
-              />
+            {/* Section: إضافة الطلاب */}
+            <div className="p-4 bg-slate-50/80 border border-slate-200/80 rounded-2xl space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-slate-900 font-black text-sm">
+                  <Users className="w-4 h-4 text-emerald-600" />
+                  <span>إضافة الطلاب</span>
+                  <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full">
+                    اختياري
+                  </span>
+                </div>
+                {selectedStudentIds.length > 0 && (
+                  <span className="text-[11px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-xl">
+                    المحدد: {selectedStudentIds.length} طالب
+                  </span>
+                )}
+              </div>
+
+              <p className="text-[11px] font-medium text-slate-500">
+                اختر الفصل الدراسي لعرض طلابه وتحديد الانضمام مباشرة للنادي:
+              </p>
+
+              {classes.length === 0 ? (
+                <div className="p-3 bg-white border border-slate-200 rounded-xl text-center text-slate-400 text-xs font-bold">
+                  لا توجد فصول دراسية حالية بالدفعة.
+                </div>
+              ) : (
+                <>
+                  {/* Class selection tabs */}
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-thin">
+                    {classes.map((cls) => {
+                      const countInClass = students.filter((s) => s.className === cls.name).length;
+                      const selectedInClass = students.filter(
+                        (s) => s.className === cls.name && selectedStudentIds.includes(s.id)
+                      ).length;
+                      const isActive = activeClassName === cls.name;
+                      return (
+                        <button
+                          key={cls.id}
+                          type="button"
+                          onClick={() => setActiveClassName(cls.name)}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 ${
+                            isActive
+                              ? 'bg-emerald-600 text-white shadow-sm'
+                              : 'bg-white text-slate-700 border border-slate-200 hover:bg-slate-100'
+                          }`}
+                        >
+                          <span>{cls.name}</span>
+                          <span
+                            className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+                              isActive ? 'bg-emerald-700 text-emerald-100' : 'bg-slate-100 text-slate-600'
+                            }`}
+                          >
+                            {selectedInClass > 0 ? `${selectedInClass}/${countInClass}` : countInClass}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Student checklist for active class */}
+                  <div className="bg-white border border-slate-200/90 rounded-xl p-3 space-y-2">
+                    <div className="flex items-center justify-between pb-2 border-b border-slate-100 text-[11px] font-bold text-slate-700">
+                      <span>طلاب {activeClassName || 'الفصل'}:</span>
+                      {currentClassStudents.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={toggleSelectAllClass}
+                          className="text-emerald-700 hover:text-emerald-800 hover:underline font-bold text-[11px]"
+                        >
+                          {isAllClassSelected ? 'إلغاء تحديد الكل' : 'تحديد جميع طلاب الفصل'}
+                        </button>
+                      )}
+                    </div>
+
+                    {currentClassStudents.length === 0 ? (
+                      <div className="text-center py-3 text-slate-400 text-xs font-medium">
+                        لا يوجد طلاب مسجلون في {activeClassName}
+                      </div>
+                    ) : (
+                      <div className="max-h-36 overflow-y-auto space-y-1.5 pr-1 text-xs">
+                        {currentClassStudents.map((std) => {
+                          const isSelected = selectedStudentIds.includes(std.id);
+                          return (
+                            <div
+                              key={std.id}
+                              onClick={() => toggleStudent(std.id)}
+                              className={`p-2 rounded-xl border flex items-center justify-between cursor-pointer transition-all ${
+                                isSelected
+                                  ? 'bg-emerald-50/90 border-emerald-300 text-emerald-950 font-black'
+                                  : 'bg-slate-50/60 border-slate-100 hover:bg-slate-100 text-slate-700 font-bold'
+                              }`}
+                            >
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={() => {}}
+                                  className="w-4 h-4 accent-emerald-600 rounded cursor-pointer"
+                                />
+                                {std.avatarUrl && (
+                                  <img
+                                    src={std.avatarUrl}
+                                    alt={std.name}
+                                    className="w-6 h-6 rounded-full object-cover border border-slate-200 shrink-0"
+                                  />
+                                )}
+                                <span className="truncate">{std.name}</span>
+                                {std.clubName && std.clubName !== 'بدون نادي' && (
+                                  <span className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200/80 px-1.5 py-0.5 rounded font-medium shrink-0">
+                                    في {std.clubName}
+                                  </span>
+                                )}
+                              </div>
+                              {std.studentCode && (
+                                <span className="text-[10px] text-slate-400 font-mono font-bold shrink-0">
+                                  {std.studentCode}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+
+              {/* Selected Students Area */}
+              <div className="pt-2 border-t border-slate-200/60">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-black text-slate-800">
+                    الطلاب المحدودون ({selectedStudentsList.length})
+                  </span>
+                  {selectedStudentsList.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedStudentIds([])}
+                      className="text-[10px] text-rose-600 font-bold hover:underline"
+                    >
+                      مسح الكل
+                    </button>
+                  )}
+                </div>
+
+                {selectedStudentsList.length === 0 ? (
+                  <div className="text-center py-2.5 bg-white border border-dashed border-slate-200 rounded-xl text-slate-400 text-xs font-medium">
+                    لم يتم اختيار أي طالب بعد
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap gap-2 max-h-28 overflow-y-auto p-1 bg-white border border-slate-200 rounded-xl">
+                    {selectedStudentsList.map((std) => (
+                      <div
+                        key={std.id}
+                        className="flex items-center gap-2 bg-emerald-50 border border-emerald-200/90 text-emerald-950 text-xs font-bold px-2.5 py-1 rounded-xl"
+                      >
+                        <span className="truncate max-w-[130px]">{std.name}</span>
+                        <span className="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded font-medium">
+                          {std.className}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => removeStudent(std.id)}
+                          className="text-emerald-700 hover:text-rose-600 p-0.5 rounded hover:bg-rose-50 transition-colors"
+                          title="إزالة الطالب"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
 
-            <div className="pt-3 flex items-center justify-end gap-2">
+            <div className="pt-3 flex items-center justify-end gap-2 border-t border-slate-100">
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-2.5 rounded-xl bg-slate-100 text-slate-600 font-bold hover:bg-slate-200"
+                className="px-4 py-2.5 rounded-xl bg-slate-100 text-slate-600 font-bold hover:bg-slate-200 transition-colors"
               >
                 إلغاء
               </button>
               <button
                 type="submit"
-                className="px-5 py-2.5 rounded-xl bg-emerald-600 text-white font-black hover:bg-emerald-700 shadow-md shadow-emerald-600/20"
+                className="px-5 py-2.5 rounded-xl bg-emerald-600 text-white font-black hover:bg-emerald-700 shadow-md shadow-emerald-600/20 transition-all flex items-center gap-1.5"
               >
-                إنشاء النادي
+                <span>إنشاء النادي</span>
+                {selectedStudentsList.length > 0 && (
+                  <span className="text-xs bg-emerald-700 px-2 py-0.5 rounded-full">
+                    {selectedStudentsList.length}
+                  </span>
+                )}
               </button>
             </div>
           </form>
@@ -1768,12 +2061,12 @@ export const EditStudentModal: React.FC<EditStudentModalProps> = ({
 
   React.useEffect(() => {
     if (student) {
-      setName(student.name);
-      setClassName(student.className);
+      setName(student.name || '');
+      setClassName(student.className || '');
       setClubName(student.clubName || 'بدون نادي');
       setPoints(student.points || 0);
       setTeacherNotes(student.teacherNotes || '');
-      setTargetMoveClass(student.className);
+      setTargetMoveClass(student.className || '');
       setShowMoveModal(false);
       setShowDeleteConfirm(false);
     }
@@ -1790,7 +2083,6 @@ export const EditStudentModal: React.FC<EditStudentModalProps> = ({
     points: points,
     attendanceRate: student.attendanceRate || 0,
     completedChallengesCount: student.completedChallengesCount || 0,
-    approvedAchievementsCount: 0,
     clubTasksCompleted: student.completedTasks || 0,
     clubAnnouncementsCount: 0,
     teacherEvaluationsCount: 0,
@@ -2269,11 +2561,11 @@ export const EditBatchModal: React.FC<EditBatchModalProps> = ({ isOpen, batch, o
 
   React.useEffect(() => {
     if (batch) {
-      setName(batch.name);
-      setStage(batch.stage);
-      setGender(batch.gender);
-      setSupervisorName(batch.supervisorName);
-      setDescription(batch.description);
+      setName(batch.name || '');
+      setStage(batch.stage || 'المرحلة الابتدائية العليا');
+      setGender(batch.gender || 'female');
+      setSupervisorName(batch.supervisorName || '');
+      setDescription(batch.description || '');
       setShowDeleteConfirm(false);
     }
   }, [batch]);
@@ -2588,10 +2880,10 @@ export const EditClassModal: React.FC<EditClassModalProps> = ({
 
   React.useEffect(() => {
     if (batchClass) {
-      setName(batchClass.name);
-      setTeacherName(batchClass.teacherName);
-      setSchedule(batchClass.schedule);
-      setRoom(batchClass.room);
+      setName(batchClass.name || '');
+      setTeacherName(batchClass.teacherName || '');
+      setSchedule(batchClass.schedule || '');
+      setRoom(batchClass.room || '');
       setShowDeleteConfirm(false);
     }
   }, [batchClass]);
@@ -2768,10 +3060,10 @@ export const EditClubModal: React.FC<EditClubModalProps> = ({ isOpen, club, onCl
 
   React.useEffect(() => {
     if (club) {
-      setName(club.name);
-      setDescription(club.description);
-      setSupervisorName(club.supervisorName);
-      setCategory(club.category);
+      setName(club.name || '');
+      setDescription(club.description || '');
+      setSupervisorName(club.supervisorName || '');
+      setCategory(club.category || '');
     }
   }, [club]);
 
@@ -3291,20 +3583,22 @@ export const EditLibraryModal: React.FC<EditLibraryModalProps> = ({
 
   React.useEffect(() => {
     if (item) {
-      setTitle(item.title);
+      setTitle(item.title || '');
       setDescription(item.description || '');
-      setFileType(item.fileType);
+      setFileType(item.fileType || 'pdf');
       setUrl(item.url || '');
       setThumbnailUrl(item.thumbnailUrl || '');
       setCategory(item.category || 'عام');
       setTargetType(item.targetType || 'all');
       if (item.targetType === 'club' && item.targetName) {
-        setSelectedClub(item.targetName);
+        setSelectedClub(item.targetName || '');
+      } else {
+        setSelectedClub(clubsList[0] || '');
       }
       setFileSize(item.fileSize || '3.5 MB');
       setDuration(item.duration || '10:00 دقيقة');
     }
-  }, [item]);
+  }, [item, clubsList]);
 
   if (!isOpen || !item) return null;
 

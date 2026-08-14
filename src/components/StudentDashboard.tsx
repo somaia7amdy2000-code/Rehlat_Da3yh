@@ -235,7 +235,7 @@ export default function StudentDashboard({ onSwitchToTeacher }: StudentDashboard
               </div>
 
               <div className="text-center py-6 text-slate-400 text-xs font-bold bg-slate-950/40 rounded-2xl border border-slate-800">
-                لا توجد إنجازات بعد. في انتظار أول إنجاز تنشئه المعلمة.
+                لا توجد إنجازات بعد. في انتظار أول إنجاز ينشئه المعلم.
               </div>
             </div>
 

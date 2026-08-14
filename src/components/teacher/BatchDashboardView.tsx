@@ -81,15 +81,6 @@ export const BatchDashboardView: React.FC<BatchDashboardViewProps> = ({
       bgIcon: 'bg-amber-100',
     },
     {
-      title: 'إجمالي الإنجازات',
-      value: stats.totalAchievements || 0,
-      unit: 'وسام/إنجاز',
-      icon: Award,
-      border: 'border-sky-200/80',
-      iconColor: 'text-sky-600',
-      bgIcon: 'bg-sky-100',
-    },
-    {
       title: 'إجمالي ملفات المكتبة',
       value: stats.libraryCount || 0,
       unit: 'ملف',
@@ -148,7 +139,7 @@ export const BatchDashboardView: React.FC<BatchDashboardViewProps> = ({
           <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
         </h2>
 
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
           {statCards.map((card, idx) => {
             const Icon = card.icon;
             return (

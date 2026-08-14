@@ -1,3 +1,5 @@
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
+
 export interface JourneyStationSetting {
   id: string;
   level: number;
@@ -11,7 +13,6 @@ export interface JourneyStationSetting {
 
 export interface XpAndRewardSettings {
   challengeXpMultiplier: number;
-  achievementXpMultiplier: number;
   clubTaskXpMultiplier: number;
   clubAnnouncementXpMultiplier: number;
   teacherEvaluationXpMultiplier: number;
@@ -47,7 +48,7 @@ export interface NotificationTemplate {
   id: string;
   title: string;
   body: string;
-  type: 'achievement' | 'challenge' | 'club' | 'evaluation' | 'system';
+  type: 'challenge' | 'club' | 'evaluation' | 'system';
 }
 
 export interface SystemSettings {
@@ -55,7 +56,6 @@ export interface SystemSettings {
   rewards: XpAndRewardSettings;
   branding: BrandingSettings;
   leaderboard: LeaderboardSettings;
-  achievementCategories: string[];
   notificationTemplates: NotificationTemplate[];
 }
 
@@ -89,8 +89,8 @@ export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
       badge: 'مجتهد',
       threshold: 500,
       icon: '⭐',
-      description: 'المواظبة العالية وحصد الأوسمة والإنجازات المعتمدة.',
-      requirementsSummary: 'جمع 500 نقطة وإنجازين معتمدين',
+      description: 'المواظبة العالية والمشاركة الفاعلة.',
+      requirementsSummary: 'جمع 500 نقطة وإكمال التحديات',
     },
     {
       id: 'st-3',
@@ -100,7 +100,7 @@ export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
       threshold: 1000,
       icon: '💎',
       description: 'التفوق والانضباط التام والمشاركة الفاعلة بأندية النشاط.',
-      requirementsSummary: 'جمع 1000 نقطة و 3 أوسمة معتمدة',
+      requirementsSummary: 'جمع 1000 نقطة والمشاركة بالأنشطة',
     },
     {
       id: 'st-4',
@@ -125,7 +125,6 @@ export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   ],
   rewards: {
     challengeXpMultiplier: 50,
-    achievementXpMultiplier: 100,
     clubTaskXpMultiplier: 40,
     clubAnnouncementXpMultiplier: 15,
     teacherEvaluationXpMultiplier: 60,
@@ -154,20 +153,7 @@ export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
     enablePointsLeaderboard: true,
     enableClassLeaderboard: true,
   },
-  achievementCategories: [
-    'قرآني وإيماني',
-    'تربوي وسلوكي',
-    'علمي ومكتبي',
-    'اجتماعي ونادي',
-    'قيادي وقدوة',
-  ],
   notificationTemplates: [
-    {
-      id: 'tpl-1',
-      title: '🎉 تهانينا! إنجاز معتمد جديد',
-      body: 'قام المعلم باعتتماد إنجازك {{achievementTitle}} وأضيفت {{xp}} XP لرصيدك!',
-      type: 'achievement',
-    },
     {
       id: 'tpl-2',
       title: '🏆 إكمال تحدي بنجاح',
@@ -220,6 +206,23 @@ export function saveSystemSettings(newSettings: SystemSettings): SystemSettings 
     console.error('Failed to persist system settings:', err);
     throw new Error('فشل حفظ الإعدادات في التخزين المحلي. يرجى التحقق من مساحة التخزين.');
   }
+
+  if (isSupabaseConfigured) {
+    try {
+      supabase.from('system_settings').upsert({
+        id: 'global',
+        rewards_config: currentSettings.rewards,
+        branding_config: currentSettings.branding,
+        leaderboard_config: currentSettings.leaderboard,
+        updated_at: new Date().toISOString()
+      }).then(({ error }) => {
+        if (error) console.warn('Supabase system_settings save warning:', error.message);
+      });
+    } catch (err) {
+      console.warn('Supabase system_settings save exception:', err);
+    }
+  }
+
   // Notify all active subscribers
   listeners.forEach((listener) => listener(currentSettings));
 

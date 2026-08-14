@@ -6,7 +6,7 @@ import {
   CheckCircle2, MapPin, Flag, Trophy, Footprints, 
   MessageSquareHeart, Home, User, Plus, X, Search, Clock, Gift,
   Crown, Star, Zap, BookOpen, Shield, Mail, HandHeart, Check, Gem, Sprout,
-  Menu, Moon, Settings, Book, BarChart3, MoreHorizontal, Lock, Flame, LogOut, Globe, Edit3, Play
+  Menu, Moon, Settings, Book, BarChart3, MoreHorizontal, Lock, Flame, LogOut, Globe, Edit3, Play, Upload
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import fantasyBg from '../assets/images/fantasy_valley_bg_1785881049645.jpg';
@@ -15,11 +15,11 @@ import { Challenge, ChallengeCategory } from '../types/challenge';
 import { challengeService } from '../services/challengeService';
 import { subscribeToSettings, getSystemSettings, SystemSettings } from '../services/systemSettingsService';
 import { ClubPage } from './ClubPage';
-import { StudentAchievementsView } from './StudentAchievementsView';
 import { StudentLibraryView } from './StudentLibraryView';
 import { BatchStudent, Batch, BatchClass, BatchClub } from '../types/teacher';
 import { teacherService } from '../services/teacherService';
 import { calculateStudentJourney, StudentJourneyMetrics } from '../services/journeyEngine';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
 // Types
 export interface YouthLevelTask {
@@ -342,7 +342,7 @@ export default function YouthMainApp({
   onLogout?: () => void;
 }) {
   const [systemSettings, setSystemSettings] = useState<SystemSettings>(getSystemSettings());
-  const [activeTab, setActiveTab] = useState<'home' | 'challenges' | 'club' | 'achievements' | 'library' | 'profile' | 'settings'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'challenges' | 'club' | 'library' | 'profile'>('home');
 
   React.useEffect(() => {
     const unsubscribe = subscribeToSettings((newSettings) => {
@@ -353,7 +353,12 @@ export default function YouthMainApp({
   const [selectedLevelModal, setSelectedLevelModal] = useState<YouthLevel | null>(null);
   const [showNotificationModal, setShowNotificationModal] = useState(false);
   const [showChallengeModal, setShowChallengeModal] = useState(false);
-  const [showBadgesModal, setShowBadgesModal] = useState(false);
+
+  // Batch & Class Selection for Student Login
+  const [availableBatches, setAvailableBatches] = useState<Batch[]>([]);
+  const [selectedBatchId, setSelectedBatchId] = useState<string>('');
+  const [availableClasses, setAvailableClasses] = useState<BatchClass[]>([]);
+  const [selectedClassId, setSelectedClassId] = useState<string>('');
 
   // Active Logged-In Student State & Context
   const [activeStudentCode, setActiveStudentCode] = useState<string | null>(null);
@@ -366,6 +371,26 @@ export default function YouthMainApp({
   const [loginError, setLoginError] = useState<string | null>(null);
   const [ambiguousMatches, setAmbiguousMatches] = useState<Array<BatchStudent & { batchName?: string }> | null>(null);
   const [isLoadingStudent, setIsLoadingStudent] = useState(true);
+
+  // Load available batches when student is not logged in
+  React.useEffect(() => {
+    if (!studentContext) {
+      teacherService.getBatches().then((batches) => {
+        setAvailableBatches(batches || []);
+      });
+    }
+  }, [studentContext]);
+
+  // Handle batch selection change
+  const handleBatchChange = async (batchId: string) => {
+    setSelectedBatchId(batchId);
+    setSelectedClassId('');
+    setAvailableClasses([]);
+    if (batchId) {
+      const classes = await teacherService.getClassesByBatch(batchId);
+      setAvailableClasses(classes || []);
+    }
+  };
 
   // Helper for Arabic normalization
   const normalizeArabic = (str: string) => {
@@ -398,38 +423,85 @@ export default function YouthMainApp({
   const handleLoginSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     setAmbiguousMatches(null);
+    setLoginError(null);
 
     const nameClean = loginNameInput.trim();
     const codeClean = loginCodeInput.trim();
 
-    if (!nameClean || !codeClean) {
-      setLoginError('يرجى إدخال الاسم الثلاثي وكود الطالب لدخول الرحلة.');
+    if (!selectedBatchId || !selectedClassId || !nameClean || !codeClean) {
+      setLoginError('يرجى اختيار الدفعة والفصل وإدخال الاسم الثلاثي وكود الطالب لدخول الرحلة.');
       return;
     }
+
+    // Extract numeric code in case composite code format (e.g., 5-D or 5-A+) is entered
+    const numericCode = codeClean.includes('-') ? codeClean.split('-')[0].trim() : codeClean;
+
+    const batchClasses = await teacherService.getClassesByBatch(selectedBatchId);
+    const batchStudents = await teacherService.getStudentsByBatch(selectedBatchId);
+    const targetClass = batchClasses.find((c) => c.id === selectedClassId);
 
     const inputTokens = normalizeArabic(nameClean).split(' ').filter(Boolean);
     const numTokens = Math.min(3, Math.max(1, inputTokens.length));
     const normalizedInput = inputTokens.slice(0, numTokens).join(' ');
 
-    const matches = allStudentsList.filter((st) => {
-      // Code match (case-insensitive)
-      const stCodeClean = (st.studentCode || '').trim().toLowerCase();
-      if (stCodeClean !== codeClean.toLowerCase()) {
-        return false;
+    let matchingStudentIds: string[] = [];
+
+    // Query Supabase directly if configured for precision by batch_id, class_id, student_code
+    if (isSupabaseConfigured) {
+      try {
+        const { data: supaStudents, error } = await supabase
+          .from('students')
+          .select('id, full_name, student_code, class_id, batch_id')
+          .eq('batch_id', selectedBatchId)
+          .eq('class_id', selectedClassId)
+          .in('student_code', [codeClean, numericCode]);
+
+        if (!error && supaStudents && supaStudents.length > 0) {
+          supaStudents.forEach((ss: any) => {
+            const stNameTokens = getFirstNTokens(ss.full_name, numTokens);
+            if (stNameTokens === normalizedInput) {
+              matchingStudentIds.push(ss.id);
+            }
+          });
+        }
+      } catch (err) {
+        console.warn('Supabase login lookup warning:', err);
       }
+    }
 
-      // Name match (compare first 3 tokens or tokens count entered)
-      const stNameTokens = getFirstNTokens(st.name, numTokens);
-      return stNameTokens === normalizedInput;
-    });
+    // Fallback to local store
+    if (matchingStudentIds.length === 0) {
+      const matches = batchStudents.filter((st) => {
+        if (st.batchId !== selectedBatchId) return false;
 
-    if (matches.length === 0) {
-      setLoginError('بيانات الطالب غير صحيحة، تأكد من الاسم والكود.');
-    } else if (matches.length === 1) {
-      await handleSelectSpecificStudent(matches[0].id);
+        const matchesClass = (st as any).class_id
+          ? (st as any).class_id === selectedClassId
+          : targetClass && st.className === targetClass.name;
+
+        if (!matchesClass) return false;
+
+        const stCodeClean = (st.studentCode || '').trim();
+        const stCodeNumeric = stCodeClean.includes('-') ? stCodeClean.split('-')[0].trim() : stCodeClean;
+
+        const matchesCode =
+          stCodeClean.toLowerCase() === codeClean.toLowerCase() ||
+          stCodeNumeric.toLowerCase() === numericCode.toLowerCase();
+
+        if (!matchesCode) return false;
+
+        const stNameTokens = getFirstNTokens(st.name, numTokens);
+        return stNameTokens === normalizedInput;
+      });
+
+      matchingStudentIds = matches.map((m) => m.id);
+    }
+
+    if (matchingStudentIds.length === 0) {
+      setLoginError('بيانات الطالب غير صحيحة، تأكد من الدفعة، الفصل، الاسم والكود.');
+    } else if (matchingStudentIds.length === 1) {
+      await handleSelectSpecificStudent(matchingStudentIds[0]);
     } else {
-      setAmbiguousMatches(matches);
-      setLoginError(null);
+      setLoginError('توجد بيانات مكررة لهذا الطالب في هذا الفصل. يرجى التواصل مع المعلم لتصحيح البيانات.');
     }
   };
 
@@ -483,7 +555,7 @@ export default function YouthMainApp({
 
   const handleLoginWithCode = async (code: string) => {
     if (!code || !code.trim()) {
-      setLoginError('الرجاء إدخال كود الطالبة (مثال: STU-101)');
+      setLoginError('الرجاء إدخال كود الطالب (مثال: STU-101)');
       return;
     }
     const clean = code.trim();
@@ -493,13 +565,16 @@ export default function YouthMainApp({
       setStudentContext(ctx);
       setLoginError(null);
     } else {
-      setLoginError(`لم يتم العثور على طالبة بالكود "${clean}". يرجى التأكد من الكود المعتمد في بوابة المعلمة.`);
+      setLoginError(`لم يتم العثور على طالب بالكود "${clean}". يرجى التأكد من الكود المعتمد لدى المعلم.`);
     }
   };
 
   const handleLogoutStudent = () => {
     setActiveStudentCode(null);
     setStudentContext(null);
+    setSelectedBatchId('');
+    setSelectedClassId('');
+    setAvailableClasses([]);
     setLoginNameInput('');
     setLoginCodeInput('');
     setAmbiguousMatches(null);
@@ -523,6 +598,12 @@ export default function YouthMainApp({
   const currentBatch: Batch | null = studentContext?.batch || null;
   const currentClass: BatchClass | null = studentContext?.classItem || null;
   const currentClub: BatchClub | null = studentContext?.clubItem || null;
+
+  console.log('[TRACE YouthMainApp] studentContext?.student?.id:', studentContext?.student?.id);
+  console.log('[TRACE YouthMainApp] studentContext?.student?.clubId:', studentContext?.student?.clubId);
+  console.log('[TRACE YouthMainApp] studentContext?.student?.clubName:', studentContext?.student?.clubName);
+  console.log('[TRACE YouthMainApp] studentContext?.clubItem:', studentContext?.clubItem);
+  console.log('[TRACE YouthMainApp] currentClub:', currentClub);
 
   // Calculate actual approved challenge count from submissions or student record
   const approvedFromList = (studentContext?.challenges || []).filter((ch) => {
@@ -549,7 +630,7 @@ export default function YouthMainApp({
     (s) =>
       s.status === 'approved' &&
       !matchedSubIds.has(s.id) &&
-      (s.sourceType === 'challenge' || (!s.sourceType && !s.achievementId && s.sourceType !== 'club')) &&
+      (s.sourceType === 'challenge' || (!s.sourceType && s.sourceType !== 'club')) &&
       (s.studentId === currentStudent?.id ||
         (s.studentCode && currentStudent?.studentCode && s.studentCode === currentStudent.studentCode) ||
         (s.studentName && currentStudent?.name && s.studentName.trim() === currentStudent.name.trim()))
@@ -560,27 +641,25 @@ export default function YouthMainApp({
   // Dynamic Journey Metrics for Authenticated Student
   const currentJourneyMetrics: StudentJourneyMetrics = {
     id: currentStudent?.id || 'std-guest',
-    name: currentStudent?.name || 'طالبة رحلة القرآن',
+    name: currentStudent?.name || 'طالب رحلة القرآن',
     studentCode: currentStudent?.studentCode || 'STU-100',
     batchId: currentBatch?.id || currentStudent?.batchId,
     xp: currentStudent?.points || 0,
     points: currentStudent?.points || 0,
     attendanceRate: currentStudent?.attendanceRate || 0,
     completedChallengesCount: actualCompletedChallengesCount,
-    approvedAchievementsCount: studentContext?.unlockedAch?.length || 0,
     clubTasksCompleted: currentStudent?.completedTasks || 0,
     clubAnnouncementsCount: 0,
     teacherEvaluationsCount: 0,
     libraryViewsCount: 0,
     specialRewardsCount: 0,
-    badgesEarnedCount: studentContext?.unlockedAch?.length || 0,
   };
 
   const dynamicJourneyResult = calculateStudentJourney(currentJourneyMetrics, currentBatch?.stations);
   const currentLevelIdx = dynamicJourneyResult.currentStationIndex;
 
   const userProfile = {
-    name: currentStudent?.name || 'طالبة مسجلة',
+    name: currentStudent?.name || 'طالب مسجل',
     studentCode: currentStudent?.studentCode || 'STU-100',
     title: currentBatch ? `${currentBatch.name} • ${currentStudent?.className}` : 'حلقة القرآن الكريم',
     avatar: currentStudent?.avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=250',
@@ -688,6 +767,7 @@ export default function YouthMainApp({
         sourceName: ch.title,
         contentSummary: submittedText,
         rewardXp: ch.xp || ch.xp_reward || 50,
+        challengeId: ch.id,
       });
       setToastMessage('🎉 تم إرسال إنجازك للمراجعة بنجاح!');
       setStudentSubmissionText('');
@@ -748,7 +828,6 @@ export default function YouthMainApp({
         const earnedPoints = result.rewardEarned.points;
         if (currentBatch && currentStudent) {
           await teacherService.updateStudent(currentBatch.id, currentStudent.id, {
-            points: (currentStudent.points || 0) + earnedPoints,
             completedChallengesCount: (currentStudent.completedChallengesCount || 0) + 1,
           });
           refreshStudentContext();
@@ -775,7 +854,6 @@ export default function YouthMainApp({
         const earnedPoints = result.rewardEarned.points;
         if (currentBatch && currentStudent) {
           await teacherService.updateStudent(currentBatch.id, currentStudent.id, {
-            points: (currentStudent.points || 0) + earnedPoints,
             completedChallengesCount: (currentStudent.completedChallengesCount || 0) + 1,
           });
           refreshStudentContext();
@@ -830,6 +908,44 @@ export default function YouthMainApp({
 
           {/* Login Form Card */}
           <form onSubmit={handleLoginSubmit} className="bg-slate-800/90 border border-slate-700/80 rounded-[28px] p-6 shadow-2xl space-y-4 backdrop-blur-md">
+            {/* 1. Batch Selection */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-black text-slate-200 block">الدفعة / المسار</label>
+              <select
+                value={selectedBatchId}
+                onChange={(e) => handleBatchChange(e.target.value)}
+                className="w-full bg-slate-900 border border-slate-600 rounded-2xl px-4 py-3 text-sm font-black text-white focus:outline-none focus:border-teal-400 text-right cursor-pointer"
+              >
+                <option value="" className="bg-slate-900 text-slate-400">-- اختر الدفعة --</option>
+                {availableBatches.map((b) => (
+                  <option key={b.id} value={b.id} className="bg-slate-900 text-white">
+                    {b.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* 2. Class Selection */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-black text-slate-200 block">الحلقة / الفصل</label>
+              <select
+                value={selectedClassId}
+                onChange={(e) => setSelectedClassId(e.target.value)}
+                disabled={!selectedBatchId}
+                className="w-full bg-slate-900 border border-slate-600 rounded-2xl px-4 py-3 text-sm font-black text-white focus:outline-none focus:border-teal-400 text-right cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <option value="" className="bg-slate-900 text-slate-400">
+                  {selectedBatchId ? '-- اختر الفصل --' : '-- اختر الدفعة أولاً --'}
+                </option>
+                {availableClasses.map((c) => (
+                  <option key={c.id} value={c.id} className="bg-slate-900 text-white">
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* 3. Student Name Input */}
             <div className="space-y-1.5">
               <label className="text-xs font-black text-slate-200 block">الاسم الثلاثي للطالب</label>
               <input
@@ -841,6 +957,7 @@ export default function YouthMainApp({
               />
             </div>
 
+            {/* 4. Student Code Input */}
             <div className="space-y-1.5">
               <label className="text-xs font-black text-slate-200 block">كود الطالب</label>
               <input
@@ -968,16 +1085,16 @@ export default function YouthMainApp({
             <button
               onClick={handleLogoutStudent}
               className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-black rounded-xl border border-slate-200 transition-all items-center gap-1.5 cursor-pointer shadow-2xs flex"
-              title="تبديل الطالبة / الخروج"
+              title="تبديل الطالب / الخروج"
             >
-              <span>تبديل الطالبة 🔄</span>
+              <span>تبديل الطالب 🔄</span>
             </button>
             {onSwitchToTeacher && (
               <button 
                 onClick={onSwitchToTeacher}
                 className="hidden sm:flex px-3 py-1.5 bg-teal-50 text-[#0F766E] text-xs font-black rounded-xl border border-teal-200 hover:bg-teal-100 transition-all items-center gap-1.5 cursor-pointer shadow-2xs"
               >
-                <span>بوابة المعلمات ↺</span>
+                <span>بوابة المعلم ↺</span>
               </button>
             )}
             <div 
@@ -1280,7 +1397,7 @@ export default function YouthMainApp({
                               className="bg-[#0F766E] text-white text-[10px] sm:text-[11px] font-black px-3 py-1 rounded-full shadow-xl border-2 border-white whitespace-nowrap flex items-center gap-1.5"
                             >
                               <span className="w-2 h-2 rounded-full bg-emerald-300 animate-ping shrink-0" />
-                              <span>أنتِ هنا 🏃‍♀️</span>
+                              <span>أنت هنا 🏃‍♂️</span>
                             </motion.div>
                           </div>
                         </>
@@ -1387,7 +1504,7 @@ export default function YouthMainApp({
                       <span className="absolute text-lg font-black text-slate-900">{dynamicJourneyResult.journeyPercentage}%</span>
                     </div>
                     <span className="text-xs font-bold text-slate-500 mt-2 text-center">
-                      {dynamicJourneyResult.journeyPercentage === 0 ? 'ابدأي رحلتك المتميزة اليوم!' : 'أنتِ في الطريق، استمري!'}
+                      {dynamicJourneyResult.journeyPercentage === 0 ? 'ابدأ رحلتك المتميزة اليوم!' : 'أنت في الطريق، استمر!'}
                     </span>
                   </div>
 
@@ -1439,7 +1556,7 @@ export default function YouthMainApp({
                       <span>{dynamicJourneyResult.currentStation.title}</span>
                     </h3>
                     <p className="text-xs text-slate-500 font-bold mt-1">
-                      أكملي التحديات واجمعي النقاط لترتقي للمحطة التالية
+                      أكمل التحديات واجمع النقاط لترتقي للمحطة التالية
                     </p>
                   </div>
                 </div>
@@ -1482,7 +1599,7 @@ export default function YouthMainApp({
                         <div>
                           <div className="flex items-center gap-1.5 text-xs font-black text-[#D4A017]">
                             <Sparkles className="w-3.5 h-3.5" />
-                            <span>رسالة المعلمة</span>
+                            <span>رسالة المعلم</span>
                             {latestMsg && latestMsg.targetName && (
                               <span className="text-[10px] font-bold text-teal-200 bg-white/10 px-2 py-0.5 rounded-md">
                                 {latestMsg.targetName}
@@ -1491,7 +1608,7 @@ export default function YouthMainApp({
                           </div>
                           {latestMsg && (
                             <span className="text-[10px] font-bold text-teal-200/80 block">
-                              {latestMsg.createdAt} • بقلم: {latestMsg.author || 'المعلمة'}
+                              {latestMsg.createdAt} • بقلم: {latestMsg.author || 'المعلم'}
                             </span>
                           )}
                         </div>
@@ -1518,7 +1635,7 @@ export default function YouthMainApp({
                       </p>
                     ) : (
                       <p className="text-xs font-bold leading-relaxed text-teal-100/90 bg-teal-800/20 p-3 rounded-2xl border border-teal-600/30">
-                        لا توجد رسائل جديدة من المعلمة حالياً. واصلي الاجتهاد والتفوق! 🌸
+                        لا توجد رسائل جديدة من المعلم حالياً. واصل الاجتهاد والتفوق! 🌸
                       </p>
                     )}
 
@@ -1590,13 +1707,9 @@ export default function YouthMainApp({
                 <div className="relative z-10 space-y-5">
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <div className="flex items-center gap-2">
-                      <span className="bg-amber-500/20 text-amber-300 border border-amber-400/30 font-bold px-3.5 py-1.5 rounded-full flex items-center gap-1.5 text-xs">
-                        <Flame className="w-4 h-4 fill-amber-400 text-amber-400" />
-                        <span>🔥 سلسلة 7 أيام متتالية</span>
-                      </span>
                       <span className="bg-[#14B8A6]/20 text-[#2DD4BF] border border-teal-400/30 font-bold px-3.5 py-1.5 rounded-full flex items-center gap-1.5 text-xs">
                         <Sparkles className="w-4 h-4 text-[#2DD4BF]" />
-                        <span>💎 +{userProfile.points} نقطة إجمالية</span>
+                        <span>+{userProfile.points} نقطة إجمالية</span>
                       </span>
                     </div>
 
@@ -1609,9 +1722,6 @@ export default function YouthMainApp({
                     <h2 className="text-2xl sm:text-[32px] font-bold text-white tracking-tight leading-tight flex items-center gap-2">
                       <span>⚡ تحديات اليوم والأسبوع والشهر</span>
                     </h2>
-                    <p className="text-slate-300 text-xs sm:text-sm font-bold mt-1.5 leading-relaxed">
-                      تحدّ نفسك، ارتقِ بإتقانك للقرآن الكريم، واحصد الأوسمة والجواهر مع زملائك في الحلقة.
-                    </p>
                   </div>
 
                   {/* Overall Daily Progress Bar */}
@@ -1668,9 +1778,6 @@ export default function YouthMainApp({
                         </p>
 
                         <div className="flex items-center gap-2.5 pt-1">
-                          <span className="bg-amber-500/20 text-amber-300 border border-amber-400/30 px-3.5 py-1.5 rounded-full text-xs font-bold font-mono flex items-center gap-1.5">
-                            <span>💎 +{featuredChallenge.gems} جواهر</span>
-                          </span>
                           <span className="bg-purple-500/20 text-purple-300 border border-purple-400/30 px-3.5 py-1.5 rounded-full text-xs font-bold font-mono flex items-center gap-1.5">
                             <span>✨ +{featuredChallenge.xp} XP</span>
                           </span>
@@ -1772,7 +1879,7 @@ export default function YouthMainApp({
                 >
                   <div className="flex items-center justify-between text-xs font-bold px-1">
                     <span className="text-amber-600">الشهرية</span>
-                    <span className="text-slate-900">الختمات الذهبية</span>
+                    <span className="text-slate-900">تحديات الشهر</span>
                   </div>
 
                   <div className="flex flex-col items-center justify-center flex-1">
@@ -1780,7 +1887,7 @@ export default function YouthMainApp({
                       <Crown className="w-5 h-5 fill-amber-500" />
                     </div>
                     <span className="text-2xl sm:text-3xl font-black text-slate-900 font-mono">{monthlyDoneCount} / {monthlyChallenges.length}</span>
-                    <span className="text-xs font-bold text-[#6B7280]">ختمات شهرية مكتملة</span>
+                    <span className="text-xs font-bold text-[#6B7280]">تحديات شهرية مكتملة</span>
                   </div>
                 </motion.div>
               </div>
@@ -2053,35 +2160,17 @@ export default function YouthMainApp({
               studentCode={currentStudent?.studentCode || ''}
               className={currentStudent?.className || ''}
               refreshContext={refreshStudentContext}
+              debugInfo={studentContext?.debugInfo}
+              studentContext={studentContext}
               onRewardEarned={async (earnedXp) => {
                 if (currentBatch && currentStudent) {
                   await teacherService.updateStudent(currentBatch.id, currentStudent.id, {
-                    points: (currentStudent.points || 0) + earnedXp,
                     completedTasks: (currentStudent.completedTasks || 0) + 1,
                   });
                   refreshStudentContext();
                 }
               }}
               triggerConfetti={triggerConfetti}
-            />
-          </motion.div>
-        )}
-
-        {/* ================= TAB 3.5: ACHIEVEMENTS VIEW ================= */}
-        {activeTab === 'achievements' && (
-          <motion.div
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.25 }}
-          >
-            <StudentAchievementsView
-              batchId={currentBatch?.id || ''}
-              batchName={currentBatch?.name || 'الدفعة العامة'}
-              clubName={currentStudent?.clubName || 'بدون نادي'}
-              studentId={currentStudent?.id || ''}
-              onAdvanceJourneySteps={(steps) => {
-                triggerConfetti();
-              }}
             />
           </motion.div>
         )}
@@ -2104,8 +2193,8 @@ export default function YouthMainApp({
           </motion.div>
         )}
 
-        {/* ================= TAB 4: PROFILE & SETTINGS VIEW ================= */}
-        {(activeTab === 'profile' || activeTab === 'settings') && (
+        {/* ================= TAB 4: PROFILE VIEW ================= */}
+        {activeTab === 'profile' && (
           <motion.div 
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
@@ -2198,24 +2287,9 @@ export default function YouthMainApp({
               </div>
             </div>
 
-            {/* 2. STATS (الإحصائيات - 4 CARDS) */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              {/* Stat 1: Streak */}
-              <motion.div 
-                whileHover={{ y: -4 }}
-                transition={{ duration: 0.25 }}
-                className="rounded-[24px] bg-white p-5 shadow-[0_8px_30px_rgba(0,0,0,0.06)] border border-[#EEF2F7] flex flex-col justify-between text-center transition-all"
-              >
-                <div className="w-11 h-11 rounded-[16px] bg-amber-50 text-amber-500 flex items-center justify-center mx-auto mb-2 shadow-xs">
-                  <Flame className="w-5 h-5 fill-amber-500" />
-                </div>
-                <span className="text-2xl sm:text-3xl font-black text-slate-900 font-mono">
-                  {userProfile.streakDays} أيام
-                </span>
-                <span className="text-xs font-bold text-[#6B7280] mt-1">الأيام المتتالية 🔥</span>
-              </motion.div>
-
-              {/* Stat 2: Total Points */}
+            {/* 2. STATS (الإحصائيات الحقيقية فقط) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Stat 1: Total Points */}
               <motion.div 
                 whileHover={{ y: -4 }}
                 transition={{ duration: 0.25 }}
@@ -2230,22 +2304,7 @@ export default function YouthMainApp({
                 <span className="text-xs font-bold text-[#6B7280] mt-1">إجمالي النقاط 💎</span>
               </motion.div>
 
-              {/* Stat 3: Badges Count */}
-              <motion.div 
-                whileHover={{ y: -4 }}
-                transition={{ duration: 0.25 }}
-                className="rounded-[24px] bg-white p-5 shadow-[0_8px_30px_rgba(0,0,0,0.06)] border border-[#EEF2F7] flex flex-col justify-between text-center transition-all"
-              >
-                <div className="w-11 h-11 rounded-[16px] bg-purple-50 text-purple-600 flex items-center justify-center mx-auto mb-2 shadow-xs">
-                  <Award className="w-5 h-5 fill-purple-500" />
-                </div>
-                <span className="text-2xl sm:text-3xl font-black text-slate-900 font-mono">
-                  {userProfile.badgesCount}
-                </span>
-                <span className="text-xs font-bold text-[#6B7280] mt-1">الأوسمة المكتسبة 🏅</span>
-              </motion.div>
-
-              {/* Stat 4: Completed Challenges */}
+              {/* Stat 2: Completed Challenges */}
               <motion.div 
                 whileHover={{ y: -4 }}
                 transition={{ duration: 0.25 }}
@@ -2261,201 +2320,66 @@ export default function YouthMainApp({
               </motion.div>
             </div>
 
-            {/* 3. ACHIEVEMENTS / BADGES GRID (الإنجازات - "أوسمتي") */}
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-lg sm:text-xl font-bold text-slate-900 flex items-center gap-2">
-                    <span>أوسمتي 🏅</span>
-                  </h3>
-                  <p className="text-xs text-[#6B7280] font-bold mt-0.5">
-                    مجموعة الأوسمة والشارات الشرفية التي حصدتها في رحلتك القرآنية
-                  </p>
-                </div>
-                <span className="text-xs font-bold text-[#14B8A6] bg-teal-50 px-3 py-1 rounded-full border border-teal-200 font-mono">
-                  {studentContext?.unlockedAch?.length || 0} أوسمة معتمدة
-                </span>
-              </div>
+            {/* 3. RECENT ACTIVITY (النشاط الأخير - البيانات الحقيقية فقط) */}
+            {(() => {
+              const studentSubs = (studentContext?.submissions || []).filter(
+                (s: any) =>
+                  s.studentId === currentStudent?.id ||
+                  (s.studentCode && currentStudent?.studentCode && s.studentCode === currentStudent.studentCode) ||
+                  (s.studentName && currentStudent?.name && s.studentName.trim() === currentStudent.name.trim())
+              );
 
-              {studentContext?.unlockedAch && studentContext.unlockedAch.length > 0 ? (
-                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-                  {studentContext.unlockedAch.map((ach: any) => (
-                    <motion.div
-                      key={ach.id || ach.achievementId}
-                      whileHover={{ y: -4 }}
-                      transition={{ duration: 0.2 }}
-                      onClick={() => {
-                        setToastMessage(`🏅 وسام "${ach.title || 'إنجاز'}": ${ach.description || 'تم اعتماده بنجاح'}`);
-                        setTimeout(() => setToastMessage(null), 3000);
-                      }}
-                      className="rounded-[24px] p-4 text-center border transition-all cursor-pointer flex flex-col items-center justify-between min-h-[160px] bg-white border-[#EEF2F7] shadow-[0_8px_25px_rgba(0,0,0,0.05)] hover:shadow-[0_12px_30px_rgba(20,184,166,0.12)] hover:border-teal-300"
-                    >
-                      <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-2xl mb-2 relative bg-gradient-to-br from-amber-100 to-teal-50 border border-amber-200/60 shadow-[0_4px_20px_rgba(245,158,11,0.2)]">
-                        <span>{ach.icon || '🏅'}</span>
-                      </div>
+              if (studentSubs.length === 0) return null;
 
-                      <div>
-                        <h4 className="text-xs font-bold text-slate-900">
-                          {ach.title || 'إنجاز معتمد'}
-                        </h4>
-                        <p className="text-[10px] text-[#6B7280] font-bold mt-0.5 line-clamp-2">
-                          {ach.description || ach.requiredCondition || 'تم اعتماده من قبل المعلمة'}
-                        </p>
-                      </div>
-
-                      <span className="text-[9px] px-2.5 py-0.5 rounded-full font-bold mt-2 bg-teal-50 text-[#14B8A6] border border-teal-200/60">
-                        مكتسب ✓
-                      </span>
-                    </motion.div>
-                  ))}
-                </div>
-              ) : (
-                <div className="bg-slate-50/80 rounded-[28px] p-8 text-center border border-slate-200/80 space-y-2">
-                  <div className="w-12 h-12 bg-amber-50 rounded-2xl flex items-center justify-center text-amber-600 font-bold mx-auto text-xl">
-                    🏅
-                  </div>
-                  <p className="text-sm font-black text-slate-800">لا توجد إنجازات بعد. في انتظار أول إنجاز تنشئه المعلمة.</p>
-                </div>
-              )}
-            </div>
-
-            {/* 4. RECENT ACTIVITY (النشاط الأخير) */}
-            <div className="rounded-[28px] bg-white p-6 sm:p-7 shadow-[0_8px_30px_rgba(0,0,0,0.06)] border border-[#EEF2F7] space-y-5">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                <div>
-                  <h3 className="text-lg font-bold text-slate-900">النشاط الأخير 📜</h3>
-                  <p className="text-xs text-[#6B7280] font-bold mt-0.5">أحدث الإنجازات والتفاعلات الخاصة بك</p>
-                </div>
-                <span className="text-xs text-[#14B8A6] font-bold">نشاط حقيقي</span>
-              </div>
-
-              <div className="space-y-3.5">
-                {[
-                  { title: 'أكملت تحدي الحفظ اليومي الرئيسي', desc: 'تسميع المقرر بإتقان داخل الحلقة', reward: '+50 💎', time: 'اليوم', icon: BookOpen, color: 'bg-teal-50 text-[#14B8A6]' },
-                  { title: 'تقدم في محطة الرحلة القرآنية', desc: 'الانتقال نحو المحطة التالية بخطوات ثابتة', reward: 'تقدم 🌟', time: 'مستمر', icon: Trophy, color: 'bg-purple-50 text-purple-600' },
-                ].map((act, idx) => {
-                  const IconC = act.icon;
-                  return (
-                    <div key={idx} className="flex items-center justify-between gap-3 p-3.5 rounded-2xl bg-slate-50/70 border border-slate-100">
-                      <div className="flex items-center gap-3">
-                        <div className={`w-10 h-10 rounded-xl ${act.color} flex items-center justify-center shrink-0`}>
-                          <IconC className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <h4 className="text-xs font-bold text-slate-900">{act.title}</h4>
-                          <p className="text-[11px] text-[#6B7280] font-bold mt-0.5">{act.desc}</p>
-                        </div>
-                      </div>
-                      <div className="text-left shrink-0">
-                        <span className="text-xs font-bold text-slate-900 font-mono block">{act.reward}</span>
-                        <span className="text-[10px] text-[#6B7280] font-bold">{act.time}</span>
-                      </div>
+              return (
+                <div className="rounded-[28px] bg-white p-6 sm:p-7 shadow-[0_8px_30px_rgba(0,0,0,0.06)] border border-[#EEF2F7] space-y-5">
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                    <div>
+                      <h3 className="text-lg font-bold text-slate-900">النشاط الأخير 📜</h3>
+                      <p className="text-xs text-[#6B7280] font-bold mt-0.5">أحدث النشاطات والتشاركات الفعلية المسجلة لك</p>
                     </div>
-                  );
-                })}
-              </div>
-            </div>
+                    <span className="text-xs text-[#14B8A6] font-bold">نشاط موثق</span>
+                  </div>
 
-            {/* 5. SETTINGS (الإعدادات) */}
+                  <div className="space-y-3.5">
+                    {studentSubs.slice(0, 5).map((sub: any, idx: number) => {
+                      const isApproved = sub.status === 'approved';
+                      return (
+                        <div key={sub.id || idx} className="flex items-center justify-between gap-3 p-3.5 rounded-2xl bg-slate-50/70 border border-slate-100">
+                          <div className="flex items-center gap-3">
+                            <div className={`w-10 h-10 rounded-xl ${isApproved ? 'bg-teal-50 text-[#14B8A6]' : 'bg-amber-50 text-amber-600'} flex items-center justify-center shrink-0`}>
+                              {isApproved ? <CheckCircle2 className="w-5 h-5" /> : <Clock className="w-5 h-5" />}
+                            </div>
+                            <div>
+                              <h4 className="text-xs font-bold text-slate-900">{sub.taskTitle || sub.sourceName || 'تحدي قرآني'}</h4>
+                              <p className="text-[11px] text-[#6B7280] font-bold mt-0.5">
+                                {isApproved ? 'تم اعتماد التحدي واحتساب النقاط بنجاح' : 'تم إرسال التحديث وبانتظار اعتماد المعلم'}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="text-left shrink-0">
+                            <span className="text-xs font-bold text-slate-900 font-mono block">
+                              {sub.pointsAwarded || sub.xpAwarded ? `+${sub.pointsAwarded || sub.xpAwarded} 💎` : (isApproved ? '+50 💎' : 'قيد المراجعة')}
+                            </span>
+                            <span className="text-[10px] text-[#6B7280] font-bold">{sub.submittedAt || sub.date || 'مؤخراً'}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* 4. SETTINGS / ACCOUNT (إعدادات الحساب) */}
             <div className="rounded-[28px] bg-white p-6 sm:p-7 shadow-[0_8px_30px_rgba(0,0,0,0.06)] border border-[#EEF2F7] space-y-4">
               <div className="pb-2 border-b border-slate-100">
-                <h3 className="text-lg font-bold text-slate-900">إعدادات الحساب والتطبيق ⚙️</h3>
-                <p className="text-xs text-[#6B7280] font-bold mt-0.5">تخصيص الخيارات والإشعارات وتفضيلات المظهر</p>
+                <h3 className="text-lg font-bold text-slate-900">إعدادات الحساب ⚙️</h3>
+                <p className="text-xs text-[#6B7280] font-bold mt-0.5">إدارة الجلسة الحالية وتسجيل الخروج</p>
               </div>
 
               <div className="space-y-3">
-                {/* Item 1: Edit Account */}
-                <div 
-                  onClick={() => setIsEditProfileOpen(true)}
-                  className="p-4 rounded-2xl border border-slate-100 hover:border-teal-200 bg-slate-50/50 hover:bg-teal-50/30 flex items-center justify-between transition-all cursor-pointer"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-teal-50 text-[#14B8A6] flex items-center justify-center">
-                      <Edit3 className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <h4 className="text-xs font-bold text-slate-900">تعديل الحساب</h4>
-                      <p className="text-[11px] text-[#6B7280] font-bold mt-0.5">تحديث الاسم، الصورة الشخصية، ومعلومات الحلقة</p>
-                    </div>
-                  </div>
-                  <ChevronLeft className="w-4 h-4 text-slate-400" />
-                </div>
-
-                {/* Item 2: Notifications */}
-                <div className="p-4 rounded-2xl border border-slate-100 bg-slate-50/50 flex items-center justify-between transition-all">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center">
-                      <Bell className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <h4 className="text-xs font-bold text-slate-900">تنبيهات التحديات</h4>
-                      <p className="text-[11px] text-[#6B7280] font-bold mt-0.5">تذكير بمواعيد التحديات اليومية والجلسات</p>
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={() => {
-                      setNotificationsEnabled(!notificationsEnabled);
-                      setToastMessage(!notificationsEnabled ? '🔔 تم تفعيل التنبيهات بنجاح!' : '🔕 تم إيقاف التنبيهات');
-                      setTimeout(() => setToastMessage(null), 2500);
-                    }}
-                    className={`w-12 h-6 rounded-full p-1 transition-colors cursor-pointer flex items-center ${
-                      notificationsEnabled ? 'bg-[#14B8A6] justify-end' : 'bg-slate-300 justify-start'
-                    }`}
-                  >
-                    <div className="w-4 h-4 rounded-full bg-white shadow-md" />
-                  </button>
-                </div>
-
-                {/* Item 3: Dark Mode */}
-                <div className="p-4 rounded-2xl border border-slate-100 bg-slate-50/50 flex items-center justify-between transition-all">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
-                      <Moon className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <h4 className="text-xs font-bold text-slate-900">الوضع الليلـي</h4>
-                      <p className="text-[11px] text-[#6B7280] font-bold mt-0.5">تفعيل المظهر الداكن الهادئ للعينين</p>
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={() => {
-                      setIsDarkMode(!isDarkMode);
-                      setToastMessage(!isDarkMode ? '🌙 تم تفعيل الوضع الليلي الهادئ' : '☀️ تم العودة للمظهر النهاري');
-                      setTimeout(() => setToastMessage(null), 2500);
-                    }}
-                    className={`w-12 h-6 rounded-full p-1 transition-colors cursor-pointer flex items-center ${
-                      isDarkMode ? 'bg-indigo-600 justify-end' : 'bg-slate-300 justify-start'
-                    }`}
-                  >
-                    <div className="w-4 h-4 rounded-full bg-white shadow-md" />
-                  </button>
-                </div>
-
-                {/* Item 4: Language */}
-                <div 
-                  onClick={() => {
-                    setToastMessage('🌐 اللغة الحالية: العربية (الافتراضية)');
-                    setTimeout(() => setToastMessage(null), 2500);
-                  }}
-                  className="p-4 rounded-2xl border border-slate-100 bg-slate-50/50 hover:bg-slate-100/50 flex items-center justify-between transition-all cursor-pointer"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
-                      <Globe className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <h4 className="text-xs font-bold text-slate-900">لغة التطبيق</h4>
-                      <p className="text-[11px] text-[#6B7280] font-bold mt-0.5">العربية (Arabic)</p>
-                    </div>
-                  </div>
-                  <span className="text-xs font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-full border border-blue-200">
-                    العربية
-                  </span>
-                </div>
-
-                {/* Item 5: Logout */}
+                {/* Logout Only */}
                 <div 
                   onClick={() => {
                     handleLogoutStudent();
@@ -2499,6 +2423,57 @@ export default function YouthMainApp({
                     </div>
 
                     <div className="space-y-4 text-right">
+                      {/* Avatar Upload Preview & Device File Upload */}
+                      <div className="flex flex-col items-center justify-center gap-3 p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                        <div className="w-20 h-20 rounded-full overflow-hidden border-2 border-teal-500 shadow-sm flex items-center justify-center bg-slate-800 text-teal-300 font-bold text-2xl">
+                          {editAvatarInput ? (
+                            <img src={editAvatarInput} alt="معاينة الصورة" className="w-full h-full object-cover" />
+                          ) : (
+                            <span>{editNameInput ? editNameInput.charAt(0) : 'ط'}</span>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2 flex-wrap justify-center">
+                          <label htmlFor="student-profile-avatar-upload" className="cursor-pointer bg-teal-50 hover:bg-teal-100 text-[#0F766E] border border-teal-200 px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-xs">
+                            <Upload className="w-3.5 h-3.5" />
+                            <span>رفع صورة من الجهاز</span>
+                            <input
+                              id="student-profile-avatar-upload"
+                              type="file"
+                              accept="image/*"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (!file) return;
+                                if (file.size > 5 * 1024 * 1024) {
+                                  setToastMessage('⚠️ حجم الصورة كبير جداً (الحد الأقصى 5 ميجابايت)');
+                                  setTimeout(() => setToastMessage(null), 3000);
+                                  return;
+                                }
+                                const reader = new FileReader();
+                                reader.onload = (event) => {
+                                  const result = event.target?.result as string;
+                                  if (result) {
+                                    setEditAvatarInput(result);
+                                  }
+                                };
+                                reader.readAsDataURL(file);
+                              }}
+                              className="hidden"
+                            />
+                          </label>
+
+                          {editAvatarInput && (
+                            <button
+                              type="button"
+                              onClick={() => setEditAvatarInput('')}
+                              className="bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 px-3 py-2 rounded-xl text-xs font-bold transition-all"
+                            >
+                              إزالة الصورة
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
                       <div>
                         <label className="text-xs font-bold text-slate-700 block mb-1.5">الاسم الكامل</label>
                         <input
@@ -2510,22 +2485,12 @@ export default function YouthMainApp({
                       </div>
 
                       <div>
-                        <label className="text-xs font-bold text-slate-700 block mb-1.5">كود الطالبة المعين (غير قابل للتعديل)</label>
+                        <label className="text-xs font-bold text-slate-700 block mb-1.5">كود الطالب المعين (غير قابل للتعديل)</label>
                         <input
                           type="text"
                           value={currentStudent?.studentCode || 'STU-100'}
                           disabled
                           className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-mono font-bold text-slate-500 bg-slate-100 cursor-not-allowed"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="text-xs font-bold text-slate-700 block mb-1.5">رابط الصورة الشخصية</label>
-                        <input
-                          type="text"
-                          value={editAvatarInput}
-                          onChange={(e) => setEditAvatarInput(e.target.value)}
-                          className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 focus:outline-none focus:border-teal-500 font-mono"
                         />
                       </div>
                     </div>
@@ -2566,53 +2531,7 @@ export default function YouthMainApp({
 
       {/* ================= MODALS ================= */}
 
-      {/* Badges Modal */}
-      <AnimatePresence>
-        {showBadgesModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/60 backdrop-blur-xs dir-rtl">
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.9, y: 15 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.9, y: 15 }}
-              className="bg-white rounded-3xl p-6 w-full max-w-md shadow-2xl border border-slate-100 space-y-4"
-            >
-              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                <h3 className="font-extrabold text-base text-slate-900">أوسمتي المكتسبة 🏆</h3>
-                <button onClick={() => setShowBadgesModal(false)} className="p-2 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-100 transition-colors">
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
 
-              <div className="grid grid-cols-3 gap-4 py-2">
-                <HexagonMedal material="gold" icon={Target} size="lg" label="الالتزام" />
-                <HexagonMedal material="violet" icon={Rocket} size="lg" label="المبادرة" />
-                <HexagonMedal material="emerald" icon={Users} size="lg" label="التعاون" />
-                <HexagonMedal material="sky" icon={Gift} size="lg" label="الحافظ" />
-                <HexagonMedal material="amber" icon={Heart} size="lg" label="الخُلُق" />
-              </div>
-
-              <div className="flex flex-col gap-2 pt-1">
-                <button 
-                  onClick={() => {
-                    setShowBadgesModal(false);
-                    setActiveTab('achievements');
-                  }}
-                  className="w-full py-3 bg-gradient-to-r from-teal-600 to-emerald-600 text-white font-black rounded-2xl hover:from-teal-700 hover:to-emerald-700 transition-all text-xs shadow-md cursor-pointer flex items-center justify-center gap-1.5"
-                >
-                  <Trophy className="w-4 h-4 text-amber-300" />
-                  <span>عرض جميع الإنجازات والأوسمة الشاملة 🏆</span>
-                </button>
-                <button 
-                  onClick={() => setShowBadgesModal(false)}
-                  className="w-full py-2.5 bg-slate-100 text-slate-600 font-bold rounded-2xl hover:bg-slate-200 transition-all text-xs cursor-pointer"
-                >
-                  إغلاق
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
 
       {/* Floating Level Card Glass Modal */}
       <AnimatePresence>
@@ -2846,10 +2765,10 @@ export default function YouthMainApp({
                       <CheckCircle2 className="w-5 h-5 text-emerald-600" />
                       <span>التحدي مكتمل وحُصلت النقاط! 🎉</span>
                     </div>
-                    <p className="text-slate-600">تم اعتماد الإنجاز من المعلمة وتخصيص النقاط بنجاح.</p>
+                    <p className="text-slate-600">تم اعتماد الإنجاز من المعلم وتخصيص النقاط بنجاح.</p>
                     {(selectedChallengeModal as any).submissionContent && (
                       <div className="bg-white p-2.5 rounded-xl border border-emerald-200 text-slate-800">
-                        <span className="text-[10px] text-emerald-800 font-black block">إجابتكِ المعتمدة:</span>
+                        <span className="text-[10px] text-emerald-800 font-black block">إجابتك المعتمدة:</span>
                         <p>{(selectedChallengeModal as any).submissionContent}</p>
                       </div>
                     )}
@@ -2861,10 +2780,10 @@ export default function YouthMainApp({
                       <span>تم إرسال إنجازك للمراجعة 🎉</span>
                     </div>
                     <p className="text-amber-900 font-black text-xs">الحالة: بانتظار المراجعة ⏳</p>
-                    <p className="text-slate-600">إنجازكِ بانتظار اعتماد ومراجعة المعلمة لنيل النقاط.</p>
+                    <p className="text-slate-600">إنجازك بانتظار اعتماد ومراجعة المعلم لنيل النقاط.</p>
                     {(selectedChallengeModal as any).submissionContent && (
                       <div className="bg-white p-2.5 rounded-xl border border-amber-200 text-slate-800">
-                        <span className="text-[10px] text-amber-800 font-black block">ما كتبتهِ للمراجعة:</span>
+                        <span className="text-[10px] text-amber-800 font-black block">ما كتبته للمراجعة:</span>
                         <p>{(selectedChallengeModal as any).submissionContent}</p>
                       </div>
                     )}
@@ -2879,7 +2798,7 @@ export default function YouthMainApp({
 
                     <div className="space-y-1.5">
                       <label className="block text-xs font-black text-slate-800">
-                        ماذا فعلت؟ (اكتبي تفاصيل إنجازكِ للمعلمة):
+                        ماذا فعلت؟ (اكتب تفاصيل إنجازك للمعلم):
                       </label>
                       <textarea
                         value={studentSubmissionText}
@@ -2906,9 +2825,9 @@ export default function YouthMainApp({
         )}
       </AnimatePresence>
 
-      {/* Fixed Bottom Navigation Bar (Pill with 7 items) */}
-      <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 max-w-xl w-[96%] sm:w-[92%] bg-white/95 backdrop-blur-md rounded-full border border-[#E6ECEF] shadow-xl px-2 sm:px-3 py-2 flex items-center justify-between gap-0.5 sm:gap-1 dir-ltr">
-        {/* Left Side 1: رحلتي */}
+      {/* Fixed Bottom Navigation Bar */}
+      <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 max-w-xl w-[96%] sm:w-[92%] bg-white/95 backdrop-blur-md rounded-full border border-[#E6ECEF] shadow-xl px-2 sm:px-3 py-2 flex items-center justify-between gap-0.5 sm:gap-1 dir-rtl">
+        {/* 1: رحلتي */}
         <button 
           onClick={() => setActiveTab('home')}
           className={`flex-1 flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer py-1 min-w-0 ${
@@ -2919,18 +2838,7 @@ export default function YouthMainApp({
           <span className="text-[9px] sm:text-[10px] leading-none whitespace-nowrap">رحلتي</span>
         </button>
 
-        {/* Left Side 2: التحديات */}
-        <button 
-          onClick={() => setActiveTab('challenges')}
-          className={`flex-1 flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer py-1 min-w-0 ${
-            activeTab === 'challenges' ? 'text-[#0F766E] font-black scale-105' : 'text-slate-400 hover:text-slate-600 font-bold'
-          }`}
-        >
-          <Target className="w-4 h-4 sm:w-5 sm:h-5 shrink-0" />
-          <span className="text-[9px] sm:text-[10px] leading-none whitespace-nowrap">التحديات</span>
-        </button>
-
-        {/* Left Side 3: النادي */}
+        {/* 2: النادي */}
         <button 
           onClick={() => setActiveTab('club')}
           className={`flex-1 flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer py-1 min-w-0 ${
@@ -2941,24 +2849,24 @@ export default function YouthMainApp({
           <span className="text-[9px] sm:text-[10px] leading-none whitespace-nowrap">النادي</span>
         </button>
 
-        {/* Center Prominent Action Button: 🏆 الإنجازات */}
+        {/* 3: Center Prominent Action Button: 🎯 التحديات */}
         <div className="flex flex-col items-center justify-center -mt-6 px-1 shrink-0">
           <button 
-            onClick={() => setActiveTab('achievements')}
+            onClick={() => setActiveTab('challenges')}
             className={`w-11 h-11 sm:w-13 sm:h-13 rounded-full text-white flex items-center justify-center shadow-lg hover:scale-105 transition-all cursor-pointer border-3 sm:border-4 border-white ${
-              activeTab === 'achievements' ? 'bg-[#0F766E] ring-2 ring-teal-400 shadow-teal-700/30' : 'bg-[#0F766E]'
+              activeTab === 'challenges' ? 'bg-[#0F766E] ring-2 ring-teal-400 shadow-teal-700/30' : 'bg-[#0F766E]'
             }`}
           >
-            <Trophy className="w-5 h-5 sm:w-6 sm:h-6 stroke-[2.2] text-amber-300" />
+            <Target className="w-5 h-5 sm:w-6 sm:h-6 stroke-[2.2] text-amber-300" />
           </button>
           <span className={`text-[9px] sm:text-[10px] font-black mt-0.5 leading-none transition-colors ${
-            activeTab === 'achievements' ? 'text-[#0F766E]' : 'text-slate-500'
+            activeTab === 'challenges' ? 'text-[#0F766E]' : 'text-slate-500'
           }`}>
-            الإنجازات
+            التحديات
           </span>
         </div>
 
-        {/* Right Side 1: المكتبة */}
+        {/* 4: المكتبة */}
         <button 
           onClick={() => setActiveTab('library')}
           className={`flex-1 flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer py-1 min-w-0 ${
@@ -2969,7 +2877,7 @@ export default function YouthMainApp({
           <span className="text-[9px] sm:text-[10px] leading-none whitespace-nowrap">المكتبة</span>
         </button>
 
-        {/* Right Side 2: الملف الشخصي */}
+        {/* 5: الملف الشخصي */}
         <button 
           onClick={() => setActiveTab('profile')}
           className={`flex-1 flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer py-1 min-w-0 ${
@@ -2978,17 +2886,6 @@ export default function YouthMainApp({
         >
           <User className="w-4 h-4 sm:w-5 sm:h-5 shrink-0" />
           <span className="text-[9px] sm:text-[10px] leading-none whitespace-nowrap">الملف</span>
-        </button>
-
-        {/* Right Side 3: الإعدادات */}
-        <button 
-          onClick={() => setActiveTab('settings')}
-          className={`flex-1 flex flex-col items-center justify-center gap-0.5 transition-all cursor-pointer py-1 min-w-0 ${
-            activeTab === 'settings' ? 'text-[#0F766E] font-black scale-105' : 'text-slate-400 hover:text-slate-600 font-bold'
-          }`}
-        >
-          <Settings className="w-4 h-4 sm:w-5 sm:h-5 shrink-0" />
-          <span className="text-[9px] sm:text-[10px] leading-none whitespace-nowrap">الإعدادات</span>
         </button>
       </div>
 
@@ -3005,7 +2902,7 @@ export default function YouthMainApp({
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                 <div className="flex items-center gap-2 text-[#0F766E]">
                   <Mail className="w-5 h-5" />
-                  <h3 className="font-black text-base text-slate-900">سجل رسائل المعلمة</h3>
+                  <h3 className="font-black text-base text-slate-900">سجل رسائل المعلم</h3>
                 </div>
                 <button
                   onClick={() => setIsAllMessagesModalOpen(false)}
@@ -3036,7 +2933,7 @@ export default function YouthMainApp({
                           {msg.content}
                         </p>
                         <div className="flex items-center justify-between pt-1 text-[10px] font-bold border-t border-teal-100/60">
-                          <span className="text-slate-500">المرسل: {msg.author || 'المعلمة'}</span>
+                          <span className="text-slate-500">المرسل: {msg.author || 'المعلم'}</span>
                           {isRead ? (
                             <span className="text-emerald-700 font-bold">تمت القراءة ✓</span>
                           ) : (

@@ -71,7 +71,6 @@ export const BatchJourneyAnalyticsView: React.FC<BatchJourneyAnalyticsViewProps>
     xp: activeStudentRaw.points ?? 0, // XP
     points: activeStudentRaw.points ?? 0,
     completedChallengesCount: activeStudentRaw.completedChallengesCount ?? 0,
-    approvedAchievementsCount: 0,
     clubTasksCompleted: activeStudentRaw.completedTasks ?? 0,
     clubAnnouncementsCount: 0,
     attendanceRate: activeStudentRaw.attendanceRate ?? 0,
@@ -167,7 +166,6 @@ export const BatchJourneyAnalyticsView: React.FC<BatchJourneyAnalyticsViewProps>
                 xp: std.points ?? 0,
                 points: std.points ?? 0,
                 completedChallengesCount: std.completedChallengesCount ?? 0,
-                approvedAchievementsCount: 0,
                 clubTasksCompleted: std.completedTasks ?? 0,
                 clubAnnouncementsCount: 0,
                 attendanceRate: std.attendanceRate ?? 0,
@@ -300,7 +298,7 @@ export const BatchJourneyAnalyticsView: React.FC<BatchJourneyAnalyticsViewProps>
               <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-100 text-center">
                 <span className="text-[11px] font-bold text-slate-500 block">الإنجازات والأوسمة</span>
                 <span className="text-base font-black text-amber-600 font-mono mt-0.5 block">
-                  {studentMetrics.approvedAchievementsCount + studentMetrics.badgesEarnedCount} أوسمة
+                  {studentMetrics.badgesEarnedCount || 0} أوسمة
                 </span>
               </div>
             </div>

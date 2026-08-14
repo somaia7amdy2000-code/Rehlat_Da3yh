@@ -164,7 +164,6 @@ export const BatchClassesView: React.FC<BatchClassesViewProps> = ({
                       points: std.points || 0,
                       attendanceRate: std.attendanceRate || 0,
                       completedChallengesCount: std.completedChallengesCount || 0,
-                      approvedAchievementsCount: 0,
                       clubTasksCompleted: std.completedTasks || 0,
                       clubAnnouncementsCount: 0,
                       teacherEvaluationsCount: 0,

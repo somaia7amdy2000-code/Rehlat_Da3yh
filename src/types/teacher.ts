@@ -1,5 +1,14 @@
 import { JourneyStationSetting } from '../services/systemSettingsService';
 
+export interface TeacherProfile {
+  id: string;
+  fullName: string;
+  email?: string;
+  teacherCode?: string;
+  avatarUrl?: string;
+  schoolOrCenter?: string;
+}
+
 export interface Batch {
   id: string;
   name: string;
@@ -22,7 +31,9 @@ export interface BatchStudent {
   name: string;
   studentCode?: string;
   className: string;
+  classId?: string;
   clubName?: string;
+  clubId?: string;
   levelBadge: string;
   points: number;
   completedTasks: number;
@@ -70,59 +81,20 @@ export interface ClubAnnouncement {
   createdAt: string;
 }
 
-export type AchievementType = 'manual' | 'automatic';
-export type AutoTriggerType = 
-  | 'challenges_completed'
-  | 'points_reached'
-  | 'journey_steps'
-  | 'club_tasks'
-  | 'library_views';
-
-export interface Achievement {
-  id: string;
-  batchId?: string;
-  title: string;
-  description: string;
-  icon: string;
-  requiredCondition: string;
-  journeyStepsReward: number;
-  xpReward?: number;
-  targetType: 'all' | 'batch' | 'club';
-  targetName?: string;
-  createdAt: string;
-
-  // Decoupled Achievement Types
-  type?: AchievementType;
-  autoTriggerType?: AutoTriggerType;
-  autoTriggerValue?: number;
-  requiresReview?: boolean;
-}
-
-export interface StudentUnlockedAchievement {
-  achievementId: string;
-  unlockedAt: string;
-}
-
-export interface ClubAchievement {
-  id: string;
-  title: string;
-  date: string;
-  icon?: string;
-}
-
 export interface BatchClub {
   id: string;
   batchId: string;
   name: string;
   description: string;
   supervisorName: string;
+  icon?: string;
+  color?: string;
   memberCount: number;
-  activeTasksCount: number;
-  category: string;
+  activeTasksCount?: number;
+  category?: string;
   members: ClubMember[];
-  tasks: ClubTask[];
-  announcements: ClubAnnouncement[];
-  achievements: ClubAchievement[];
+  tasks?: ClubTask[];
+  announcements?: ClubAnnouncement[];
 }
 
 export interface BatchChallenge {
@@ -136,6 +108,7 @@ export interface BatchChallenge {
   participantsCount: number;
   dueDate: string;
   targetType?: 'school' | 'batch' | 'class' | 'club' | 'student' | 'all';
+  targetId?: string;
   targetName?: string;
   targetStudentId?: string;
   targetStudentCode?: string;
@@ -149,15 +122,17 @@ export interface BatchLibraryItem {
   batchId?: string;
   title: string;
   description?: string;
-  fileType: LibraryResourceType;
+  fileType?: LibraryResourceType;
+  type?: string;
   fileSize?: string;
   duration?: string;
   url?: string;
   thumbnailUrl?: string;
-  uploadedAt: string;
+  uploadedAt?: string;
   category?: string;
   uploadedBy?: string;
   targetType?: LibraryTargetAudience;
+  targetId?: string;
   targetName?: string;
   targetStudentId?: string;
   targetStudentCode?: string;
@@ -183,14 +158,13 @@ export interface PendingSubmission {
   className: string;
   clubName?: string;
   taskTitle: string;
-  sourceType: 'club' | 'challenge' | 'achievement' | 'regular';
+  sourceType: 'club' | 'challenge' | 'regular';
   sourceName: string;
   submittedAt: string;
   contentSummary: string;
   rewardXp: number;
   status: 'pending' | 'approved' | 'rejected';
   teacherNotes?: string;
-  achievementId?: string;
   challengeId?: string;
 }
 

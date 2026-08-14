@@ -12,14 +12,13 @@ export interface StudentJourneyMetrics {
   xp: number;
   points: number;
   completedChallengesCount: number;
-  approvedAchievementsCount: number;
   clubTasksCompleted: number;
   clubAnnouncementsCount: number;
   attendanceRate: number; // 0 - 100%
   teacherEvaluationsCount: number;
   libraryViewsCount: number;
   specialRewardsCount: number;
-  badgesEarnedCount: number;
+  badgesEarnedCount?: number;
   avatarUrl?: string;
 }
 
@@ -77,7 +76,6 @@ export function calculateStudentJourney(
     xp = 0,
     points = 0,
     completedChallengesCount = 0,
-    approvedAchievementsCount = 0,
     clubTasksCompleted = 0,
     clubAnnouncementsCount = 0,
     attendanceRate = 0,
@@ -91,7 +89,6 @@ export function calculateStudentJourney(
   const totalWeightedScore = Math.max(0, points, xp);
 
   const challengesXp = completedChallengesCount * (rewards.challengeXpMultiplier || 50);
-  const achievementsXp = approvedAchievementsCount * (rewards.achievementXpMultiplier || 100);
   const clubXp = clubTasksCompleted * (rewards.clubTaskXpMultiplier || 40);
   const evaluationsXp = teacherEvaluationsCount * (rewards.teacherEvaluationXpMultiplier || 60);
   const libraryXp = libraryViewsCount * (rewards.libraryViewXpMultiplier || 25);
@@ -180,14 +177,6 @@ export function calculateStudentJourney(
       completed: completedChallengesCount >= targetChallenges,
     });
 
-    const targetAchievements = currentStationIndex + 1;
-    remainingRequirements.push({
-      title: 'إنجازات وأوسمة معتمدة من المعلمة',
-      required: `${targetAchievements} إنجازات`,
-      current: `${approvedAchievementsCount} إنجاز`,
-      completed: approvedAchievementsCount >= targetAchievements,
-    });
-
     const targetEvaluations = Math.max(1, currentStationIndex);
     remainingRequirements.push({
       title: 'تقييمات إيجابية معتمدة في الحلقة',
@@ -204,12 +193,6 @@ export function calculateStudentJourney(
       icon: '🏆',
       value: `${completedChallengesCount} تحدي`,
       contributionXp: challengesXp,
-    },
-    {
-      label: 'الإنجازات المعتمدة',
-      icon: '🎖️',
-      value: `${approvedAchievementsCount} إنجاز`,
-      contributionXp: achievementsXp,
     },
     {
       label: 'مجموع نقاط الـ XP',

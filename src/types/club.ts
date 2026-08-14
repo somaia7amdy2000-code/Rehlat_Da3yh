@@ -51,16 +51,6 @@ export interface ClubMember {
   avatarUrl?: string;
 }
 
-export interface ClubAchievement {
-  id: string;
-  title: string;
-  description: string;
-  date: string;
-  iconName?: string;
-  category?: string;
-  badgeTag?: string;
-}
-
 export interface ClubFile {
   id: string;
   title: string;

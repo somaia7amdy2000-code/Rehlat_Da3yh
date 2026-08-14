@@ -3,7 +3,6 @@ import {
   ClubAnnouncement,
   ClubTask,
   ClubMember,
-  ClubAchievement,
   ClubFile,
   SupervisorMessage,
 } from '../types/club';
@@ -27,8 +26,6 @@ const initialAnnouncements: ClubAnnouncement[] = [];
 const initialTasks: ClubTask[] = [];
 
 const initialMembers: ClubMember[] = [];
-
-const initialAchievements: ClubAchievement[] = [];
 
 const initialFiles: ClubFile[] = [];
 
@@ -118,15 +115,6 @@ export const clubService = {
     // Example Supabase snippet:
     // const { data } = await supabase.from('club_members').select('id, name, class_name, level_badge, avatar_url');
     return initialMembers;
-  },
-
-  /**
-   * Fetch club achievements timeline
-   */
-  async getClubAchievements(): Promise<ClubAchievement[]> {
-    // Example Supabase snippet:
-    // const { data } = await supabase.from('club_achievements').select('*').order('date');
-    return initialAchievements;
   },
 
   /**
