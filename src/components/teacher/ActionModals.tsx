@@ -1939,8 +1939,22 @@ interface ReviewSubmissionModalProps {
 
 export const ReviewSubmissionModal: React.FC<ReviewSubmissionModalProps> = ({ submission, onClose, onReview }) => {
   const [notes, setNotes] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   if (!submission) return null;
+
+  const handleAction = async (status: 'approved' | 'rejected') => {
+    if (isSubmitting) return;
+    setIsSubmitting(true);
+    try {
+      await onReview(submission.id, status, notes);
+      onClose();
+    } catch (err) {
+      console.error('Error during review submission:', err);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   return (
     <AnimatePresence>
@@ -2002,25 +2016,21 @@ export const ReviewSubmissionModal: React.FC<ReviewSubmissionModalProps> = ({ su
 
           <div className="flex items-center justify-end gap-2.5 pt-2 border-t border-slate-100">
             <button
-              onClick={() => {
-                onReview(submission.id, 'rejected', notes);
-                onClose();
-              }}
-              className="px-4 py-2.5 rounded-xl bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 font-extrabold text-xs flex items-center gap-1.5 cursor-pointer"
+              disabled={isSubmitting}
+              onClick={() => handleAction('rejected')}
+              className="px-4 py-2.5 rounded-xl bg-rose-50 text-rose-700 hover:bg-rose-100 border border-rose-200 font-extrabold text-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <XCircle className="w-4 h-4" />
               <span>رفض / إعادة للتعديل</span>
             </button>
 
             <button
-              onClick={() => {
-                onReview(submission.id, 'approved', notes);
-                onClose();
-              }}
-              className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-md shadow-emerald-600/20 flex items-center gap-1.5 cursor-pointer"
+              disabled={isSubmitting}
+              onClick={() => handleAction('approved')}
+              className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs shadow-md shadow-emerald-600/20 flex items-center gap-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <CheckCircle2 className="w-4 h-4" />
-              <span>اعتماد ومنح النقاط 🎉</span>
+              <span>{isSubmitting ? 'جاري الاعتماد...' : 'اعتماد ومنح النقاط 🎉'}</span>
             </button>
           </div>
         </motion.div>

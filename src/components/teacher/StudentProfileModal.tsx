@@ -16,10 +16,13 @@ export const StudentProfileModal: React.FC<StudentProfileModalProps> = ({ studen
   const [fullContext, setFullContext] = useState<any>(null);
   const [currentStudentPoints, setCurrentStudentPoints] = useState(student?.points || 0);
 
+  const [notFound, setNotFound] = useState(false);
+
   useEffect(() => {
     if (!student) return;
     let isMounted = true;
     setLoading(true);
+    setNotFound(false);
 
     const lookupKey = student.id || student.studentCode || student.name;
     teacherService.getStudentFullContext(lookupKey).then((ctx) => {
@@ -27,6 +30,10 @@ export const StudentProfileModal: React.FC<StudentProfileModalProps> = ({ studen
         setFullContext(ctx);
         if (ctx?.student) {
           setCurrentStudentPoints(ctx.student.points ?? 0);
+        } else {
+          // If remote context returned null / not found, do not retain stale points or data
+          setNotFound(true);
+          setCurrentStudentPoints(0);
         }
         setLoading(false);
       }
@@ -39,7 +46,13 @@ export const StudentProfileModal: React.FC<StudentProfileModalProps> = ({ studen
 
   if (!student) return null;
 
-  const activeStudent: BatchStudent = fullContext?.student || student;
+  // Authoritative activeStudent object: never fall back to stale student prop if remote record does not exist
+  const activeStudent: BatchStudent = fullContext?.student || {
+    ...student,
+    points: notFound ? 0 : (student.points ?? 0),
+    completedChallengesCount: notFound ? 0 : (student.completedChallengesCount ?? 0),
+    completedTasks: notFound ? 0 : (student.completedTasks ?? 0),
+  };
 
   const handleModifyPoints = async (delta: number) => {
     const newPoints = Math.max(0, currentStudentPoints + delta);
@@ -68,10 +81,10 @@ export const StudentProfileModal: React.FC<StudentProfileModalProps> = ({ studen
     return submissionsList.some(
       (s) =>
         s.status === 'approved' &&
-        (s.studentId === activeStudent.id ||
-          (s.studentCode && activeStudent.studentCode && s.studentCode.trim().toLowerCase() === activeStudent.studentCode.trim().toLowerCase()) ||
-          (s.studentName && activeStudent.name && s.studentName.trim().toLowerCase() === activeStudent.name.trim().toLowerCase())) &&
-        (s.taskTitle === ch.title || s.sourceName === ch.title || (s as any).challengeId === ch.id)
+        s.studentId === activeStudent.id &&
+        (((s as any).challengeId && ch.id)
+          ? (s as any).challengeId === ch.id
+          : (s.taskTitle === ch.title || s.sourceName === ch.title))
     );
   };
 
@@ -81,10 +94,10 @@ export const StudentProfileModal: React.FC<StudentProfileModalProps> = ({ studen
     return submissionsList.some(
       (s) =>
         s.status === 'pending' &&
-        (s.studentId === activeStudent.id ||
-          (s.studentCode && activeStudent.studentCode && s.studentCode.trim().toLowerCase() === activeStudent.studentCode.trim().toLowerCase()) ||
-          (s.studentName && activeStudent.name && s.studentName.trim().toLowerCase() === activeStudent.name.trim().toLowerCase())) &&
-        (s.taskTitle === ch.title || s.sourceName === ch.title || (s as any).challengeId === ch.id)
+        s.studentId === activeStudent.id &&
+        (((s as any).challengeId && ch.id)
+          ? (s as any).challengeId === ch.id
+          : (s.taskTitle === ch.title || s.sourceName === ch.title))
     );
   };
 
@@ -99,10 +112,10 @@ export const StudentProfileModal: React.FC<StudentProfileModalProps> = ({ studen
     submissionsList.forEach((s) => {
       if (
         s.status === 'approved' &&
-        (s.studentId === activeStudent.id ||
-          (s.studentCode && activeStudent.studentCode && s.studentCode.trim().toLowerCase() === activeStudent.studentCode.trim().toLowerCase()) ||
-          (s.studentName && activeStudent.name && s.studentName.trim().toLowerCase() === activeStudent.name.trim().toLowerCase())) &&
-        (s.taskTitle === ch.title || s.sourceName === ch.title || (s as any).challengeId === ch.id)
+        s.studentId === activeStudent.id &&
+        (((s as any).challengeId && ch.id)
+          ? (s as any).challengeId === ch.id
+          : (s.taskTitle === ch.title || s.sourceName === ch.title))
       ) {
         matchedSubIds.add(s.id);
       }
@@ -114,9 +127,7 @@ export const StudentProfileModal: React.FC<StudentProfileModalProps> = ({ studen
       s.status === 'approved' &&
       !matchedSubIds.has(s.id) &&
       (s.sourceType === 'challenge' || (!s.sourceType && s.sourceType !== 'club')) &&
-      (s.studentId === activeStudent.id ||
-        (s.studentCode && activeStudent.studentCode && s.studentCode.trim().toLowerCase() === activeStudent.studentCode.trim().toLowerCase()) ||
-        (s.studentName && activeStudent.name && s.studentName.trim().toLowerCase() === activeStudent.name.trim().toLowerCase()))
+      s.studentId === activeStudent.id
   ).length;
 
   const realCompletedChallengesCount = completedChallenges.length + unmatchedApprovedSubs;
@@ -143,7 +154,7 @@ export const StudentProfileModal: React.FC<StudentProfileModalProps> = ({ studen
   const clubItem: BatchClub | null = fullContext?.clubItem || null;
   const realClubName = activeStudent.clubName || clubItem?.name || null;
   const realBatchName = fullContext?.batch?.name || batch?.name || 'الدفعة';
-  const realClassName = activeStudent.className || 'غير معين بفصل';
+  const realClassName = fullContext?.classItem?.name || activeStudent.className || 'غير معين بفصل';
 
   return (
     <AnimatePresence>

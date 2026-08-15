@@ -258,6 +258,7 @@ CREATE INDEX IF NOT EXISTS idx_submissions_status ON public.challenge_submission
 CREATE INDEX IF NOT EXISTS idx_submissions_challenge ON public.challenge_submissions(challenge_id);
 
 CREATE INDEX IF NOT EXISTS idx_point_transactions_student ON public.point_transactions(student_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_point_transactions_unique_source ON public.point_transactions(source_type, source_id) WHERE source_id IS NOT NULL AND source_type IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_journey_settings_batch ON public.journey_settings(batch_id);
 
 CREATE INDEX IF NOT EXISTS idx_library_items_batch ON public.library_items(batch_id);
@@ -743,5 +744,398 @@ END;
 $$;
 
 GRANT EXECUTE ON FUNCTION public.submit_student_challenge(UUID, TEXT, UUID, TEXT, TEXT, TEXT) TO anon, authenticated;
+
+-- ----------------------------------------------------------------------------
+-- 5.3 HELPER NORMALIZATION FUNCTIONS FOR SECURE STUDENT PORTAL LOGIN
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.normalize_arabic(p_str TEXT)
+RETURNS TEXT
+LANGUAGE plpgsql
+IMMUTABLE
+AS $$
+DECLARE
+  v_res TEXT;
+BEGIN
+  IF p_str IS NULL THEN
+    RETURN '';
+  END IF;
+  
+  v_res := TRIM(p_str);
+  -- Remove diacritics / tashkeel
+  v_res := REGEXP_REPLACE(v_res, '[\u064B-\u065F\u0670]', '', 'g');
+  -- Normalize alef forms: أ, إ, آ, ٱ -> ا
+  v_res := REGEXP_REPLACE(v_res, '[أإآٱ]', 'ا', 'g');
+  -- Normalize teh marbuta: ة -> ه
+  v_res := REGEXP_REPLACE(v_res, 'ة', 'ه', 'g');
+  -- Normalize alef maksura: ى -> ي
+  v_res := REGEXP_REPLACE(v_res, 'ى', 'ي', 'g');
+  -- Collapse whitespace
+  v_res := REGEXP_REPLACE(v_res, '\s+', ' ', 'g');
+  RETURN LOWER(v_res);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.get_first_n_tokens(p_str TEXT, p_n INT DEFAULT 3)
+RETURNS TEXT
+LANGUAGE plpgsql
+IMMUTABLE
+AS $$
+DECLARE
+  v_words TEXT[];
+  v_len INT;
+  v_take INT;
+BEGIN
+  v_words := STRING_TO_ARRAY(public.normalize_arabic(p_str), ' ');
+  v_len := ARRAY_LENGTH(v_words, 1);
+  IF v_len IS NULL OR v_len = 0 THEN
+    RETURN '';
+  END IF;
+  v_take := LEAST(p_n, v_len);
+  RETURN ARRAY_TO_STRING(v_words[1:v_take], ' ');
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION public.normalize_student_code(p_code TEXT)
+RETURNS TEXT
+LANGUAGE plpgsql
+IMMUTABLE
+AS $$
+DECLARE
+  v_clean TEXT;
+BEGIN
+  IF p_code IS NULL THEN
+    RETURN '';
+  END IF;
+  v_clean := TRIM(p_code);
+  v_clean := LOWER(REGEXP_REPLACE(v_clean, '[\s\-_]+', '', 'g'));
+  RETURN v_clean;
+END;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- 5.4 SECURE DISCOVERY RPCS FOR UNRESTRICTED PORTAL DROPDOWNS (ANON SAFE)
+-- ----------------------------------------------------------------------------
+
+-- Returns ONLY display metadata for batches (no teacher_id, email, or internal data)
+CREATE OR REPLACE FUNCTION public.get_portal_batches()
+RETURNS TABLE (
+  id UUID,
+  name TEXT,
+  stage TEXT,
+  gender TEXT,
+  color_gradient TEXT
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  RETURN QUERY
+  SELECT 
+    b.id,
+    b.name,
+    b.stage,
+    b.gender,
+    b.color_gradient
+  FROM public.batches b
+  ORDER BY b.created_at DESC;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.get_portal_batches() TO anon, authenticated;
+
+-- Returns ONLY display metadata for classes within a specific batch
+CREATE OR REPLACE FUNCTION public.get_portal_classes(p_batch_id UUID)
+RETURNS TABLE (
+  id UUID,
+  batch_id UUID,
+  name TEXT,
+  schedule TEXT,
+  room TEXT
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF p_batch_id IS NULL THEN
+    RETURN;
+  END IF;
+
+  RETURN QUERY
+  SELECT 
+    c.id,
+    c.batch_id,
+    c.name,
+    c.schedule,
+    c.room
+  FROM public.classes c
+  WHERE c.batch_id = p_batch_id
+  ORDER BY c.name ASC;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.get_portal_classes(UUID) TO anon, authenticated;
+
+-- ----------------------------------------------------------------------------
+-- 5.5 SECURE STUDENT PORTAL LOGIN RPC
+-- ----------------------------------------------------------------------------
+-- Validates: batch_id + class_id + student_code + normalized name.
+-- Returns ONLY the verified student's profile context if and only if valid.
+CREATE OR REPLACE FUNCTION public.student_portal_login(
+  p_batch_id UUID,
+  p_class_id UUID,
+  p_student_code TEXT,
+  p_student_name TEXT
+)
+RETURNS TABLE (
+  student_id UUID,
+  batch_id UUID,
+  batch_name TEXT,
+  class_id UUID,
+  class_name TEXT,
+  student_code TEXT,
+  full_name TEXT,
+  points INT,
+  avatar_url TEXT,
+  status TEXT,
+  club_id UUID,
+  club_name TEXT,
+  club_category TEXT,
+  club_description TEXT
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_norm_code TEXT;
+  v_num_code TEXT;
+  v_norm_input_name TEXT;
+  v_input_tokens_count INT;
+  v_student_row RECORD;
+  v_matched_student_id UUID := NULL;
+  v_match_count INT := 0;
+BEGIN
+  -- Strict input validation
+  IF p_batch_id IS NULL OR p_class_id IS NULL OR p_student_code IS NULL OR p_student_name IS NULL THEN
+    RETURN;
+  END IF;
+
+  IF TRIM(p_student_code) = '' OR TRIM(p_student_name) = '' THEN
+    RETURN;
+  END IF;
+
+  v_norm_code := public.normalize_student_code(p_student_code);
+  v_num_code := public.normalize_student_code(SPLIT_PART(TRIM(p_student_code), '-', 1));
+  
+  v_norm_input_name := public.normalize_arabic(p_student_name);
+  v_input_tokens_count := ARRAY_LENGTH(STRING_TO_ARRAY(v_norm_input_name, ' '), 1);
+  IF v_input_tokens_count IS NULL OR v_input_tokens_count = 0 THEN
+    RETURN;
+  END IF;
+  v_input_tokens_count := LEAST(3, GREATEST(1, v_input_tokens_count));
+
+  -- Search strictly within the specified batch_id and class_id
+  FOR v_student_row IN
+    SELECT 
+      s.id,
+      s.batch_id,
+      s.class_id,
+      s.student_code,
+      s.full_name,
+      s.points,
+      s.avatar_url,
+      s.status
+    FROM public.students s
+    WHERE s.batch_id = p_batch_id
+      AND s.class_id = p_class_id
+      AND s.status = 'active'
+  LOOP
+    DECLARE
+      v_st_code_norm TEXT := public.normalize_student_code(v_student_row.student_code);
+      v_st_num_code TEXT := public.normalize_student_code(SPLIT_PART(TRIM(v_student_row.student_code), '-', 1));
+      v_code_matches BOOLEAN := FALSE;
+      v_name_matches BOOLEAN := FALSE;
+      v_st_name_tokens TEXT;
+    BEGIN
+      IF LOWER(TRIM(v_student_row.student_code)) = LOWER(TRIM(p_student_code))
+         OR v_st_code_norm = v_norm_code
+         OR v_st_num_code = v_num_code
+         OR v_st_code_norm = v_num_code
+         OR v_st_num_code = v_norm_code THEN
+        v_code_matches := TRUE;
+      END IF;
+
+      IF v_code_matches THEN
+        v_st_name_tokens := public.get_first_n_tokens(v_student_row.full_name, v_input_tokens_count);
+        IF v_st_name_tokens = public.get_first_n_tokens(p_student_name, v_input_tokens_count) THEN
+          v_name_matches := TRUE;
+        END IF;
+      END IF;
+
+      IF v_code_matches AND v_name_matches THEN
+        v_matched_student_id := v_student_row.id;
+        v_match_count := v_match_count + 1;
+      END IF;
+    END;
+  END LOOP;
+
+  -- Only return if exactly one unambiguous student matches
+  IF v_match_count = 1 AND v_matched_student_id IS NOT NULL THEN
+    RETURN QUERY
+    SELECT 
+      s.id AS student_id,
+      s.batch_id,
+      b.name AS batch_name,
+      s.class_id,
+      cl.name AS class_name,
+      s.student_code,
+      s.full_name,
+      s.points,
+      s.avatar_url,
+      s.status,
+      c.id AS club_id,
+      c.name AS club_name,
+      c.category AS club_category,
+      c.description AS club_description
+    FROM public.students s
+    JOIN public.batches b ON s.batch_id = b.id
+    LEFT JOIN public.classes cl ON s.class_id = cl.id
+    LEFT JOIN public.club_members cm ON s.id = cm.student_id
+    LEFT JOIN public.clubs c ON cm.club_id = c.id
+    WHERE s.id = v_matched_student_id;
+  END IF;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.student_portal_login(UUID, UUID, TEXT, TEXT) TO anon, authenticated;
+
+-- ----------------------------------------------------------------------------
+-- 5.6 SECURE STUDENT PORTAL PROFILE FETCH RPC
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.get_student_portal_profile(
+  p_student_id UUID,
+  p_student_code TEXT
+)
+RETURNS TABLE (
+  student_id UUID,
+  batch_id UUID,
+  batch_name TEXT,
+  class_id UUID,
+  class_name TEXT,
+  student_code TEXT,
+  full_name TEXT,
+  points INT,
+  avatar_url TEXT,
+  status TEXT,
+  club_id UUID,
+  club_name TEXT,
+  club_category TEXT,
+  club_description TEXT
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF p_student_id IS NULL OR p_student_code IS NULL OR TRIM(p_student_code) = '' THEN
+    RETURN;
+  END IF;
+
+  RETURN QUERY
+  SELECT 
+    s.id AS student_id,
+    s.batch_id,
+    b.name AS batch_name,
+    s.class_id,
+    cl.name AS class_name,
+    s.student_code,
+    s.full_name,
+    s.points,
+    s.avatar_url,
+    s.status,
+    c.id AS club_id,
+    c.name AS club_name,
+    c.category AS club_category,
+    c.description AS club_description
+  FROM public.students s
+  JOIN public.batches b ON s.batch_id = b.id
+  LEFT JOIN public.classes cl ON s.class_id = cl.id
+  LEFT JOIN public.club_members cm ON s.id = cm.student_id
+  LEFT JOIN public.clubs c ON cm.club_id = c.id
+  WHERE s.id = p_student_id
+    AND s.student_code = TRIM(p_student_code)
+    AND s.status = 'active';
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.get_student_portal_profile(UUID, TEXT) TO anon, authenticated;
+
+-- ----------------------------------------------------------------------------
+-- 5.7 SECURE STUDENT SUBMISSIONS FETCH RPC
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.get_student_submissions(
+  p_student_id UUID,
+  p_student_code TEXT
+)
+RETURNS TABLE (
+  id UUID,
+  batch_id UUID,
+  challenge_id UUID,
+  student_id UUID,
+  source_type TEXT,
+  source_name TEXT,
+  submission_content TEXT,
+  reward_xp INT,
+  status TEXT,
+  teacher_notes TEXT,
+  submitted_at TIMESTAMPTZ,
+  reviewed_at TIMESTAMPTZ,
+  challenge_title TEXT
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF p_student_id IS NULL OR p_student_code IS NULL OR TRIM(p_student_code) = '' THEN
+    RETURN;
+  END IF;
+
+  -- Verify student credentials
+  IF NOT EXISTS (
+    SELECT 1 FROM public.students s
+    WHERE s.id = p_student_id
+      AND s.student_code = TRIM(p_student_code)
+      AND s.status = 'active'
+  ) THEN
+    RETURN;
+  END IF;
+
+  RETURN QUERY
+  SELECT 
+    cs.id,
+    cs.batch_id,
+    cs.challenge_id,
+    cs.student_id,
+    cs.source_type,
+    cs.source_name,
+    cs.submission_content,
+    cs.reward_xp,
+    cs.status,
+    cs.teacher_notes,
+    cs.submitted_at,
+    cs.reviewed_at,
+    c.title AS challenge_title
+  FROM public.challenge_submissions cs
+  LEFT JOIN public.challenges c ON cs.challenge_id = c.id
+  WHERE cs.student_id = p_student_id
+  ORDER BY cs.submitted_at DESC;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.get_student_submissions(UUID, TEXT) TO anon, authenticated;
+
 
 

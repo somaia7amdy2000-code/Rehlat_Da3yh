@@ -38,9 +38,9 @@ interface StudentLibraryViewProps {
 }
 
 export const StudentLibraryView: React.FC<StudentLibraryViewProps> = ({
-  studentBatchId = 'batch-g6-f',
-  studentBatchName = 'G6 Girls (الصف السادس - إناث 📚)',
-  studentClubName = '🎙️ نادي الإعلام والبودكاست',
+  studentBatchId,
+  studentBatchName,
+  studentClubName,
   studentId,
   studentCode,
   studentName,

@@ -530,25 +530,6 @@ export async function migrateBatchesOnlyForAuthenticatedTeacher(): Promise<Batch
     } catch (_) {}
   }
 
-  if (batchesStore.length === 0) {
-    batchesStore = [
-      {
-        id: 'batch-g6-f',
-        name: 'دفعة طالبات الهدى - الصف السادس',
-        gender: 'female',
-        studentCount: 4,
-        classCount: 2,
-        clubCount: 2,
-        createdAt: '2026-08-01',
-        code: 'BTC-6F',
-        stage: 'الصف السادس',
-        description: 'دفعة عامة لتدبر وحفظ القرآن الكريم',
-        supervisorName: 'أ. هدى الزهراني',
-        colorGradient: 'from-rose-500/20 via-teal-500/20 to-emerald-500/20',
-      },
-    ];
-  }
-
   report.localStorageBatchCount = batchesStore.length;
 
   // 3. Read existing batches belonging to the authenticated teacher from Supabase

@@ -31,70 +31,7 @@ const initialClubs: Record<string, BatchClub[]> = {};
 const initialChallenges: Record<string, BatchChallenge[]> = {};
 
 // Seed Library Items
-const initialLibrary: Record<string, BatchLibraryItem[]> = {
-  'batch-g6-f': [
-    {
-      id: 'lib-1',
-      title: 'دليل التلاوة الخاشعة وأحكام التجويد 📖',
-      description: 'دليل شامل ومصوّر لأهم أحكام النون الساكنة والتنوين مع أمثلة من القرآن الكريم.',
-      fileType: 'pdf',
-      url: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
-      fileSize: '2.4 MB',
-      targetType: 'all',
-      uploadedAt: '2026-08-01',
-      category: 'تجويد وقراءات',
-      thumbnailUrl: 'https://images.unsplash.com/photo-1609599006353-e629aaabfeae?auto=format&fit=crop&q=80&w=600',
-    },
-    {
-      id: 'lib-2',
-      title: 'كيف تعد بودكاست دعوي ناجح؟ 🎬',
-      description: 'مقطع فيديو تعليمي يشرح أساسيات كتابة السكريبت والتسجيل الصوتي المؤثر.',
-      fileType: 'video',
-      url: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-      fileSize: '14.8 MB',
-      targetType: 'all',
-      uploadedAt: '2026-08-02',
-      category: 'إعلام وبودكاست',
-      thumbnailUrl: 'https://images.unsplash.com/photo-1590602847861-f357a9332bbc?auto=format&fit=crop&q=80&w=600',
-    },
-    {
-      id: 'lib-3',
-      title: 'تسجيل تلاوة نموذجية لسورة الملك 🎧',
-      description: 'تلاوة خاشعة بالترتيل للمتابعة والتكرار مع القارئ الشيخ.',
-      fileType: 'audio',
-      url: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3',
-      fileSize: '5.1 MB',
-      targetType: 'all',
-      uploadedAt: '2026-08-03',
-      category: 'تلاوات خاشعة',
-      thumbnailUrl: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&q=80&w=600',
-    },
-    {
-      id: 'lib-4',
-      title: 'إنفوجرافيك: صفات الداعية الصغير 🖼️',
-      description: 'تصميم بصرِي متكامل يوضح القيم الخمس الأساسية للطالب القدوة.',
-      fileType: 'image',
-      url: 'https://images.unsplash.com/photo-1434030216411-0b793f4b4173?auto=format&fit=crop&q=80&w=1000',
-      fileSize: '1.2 MB',
-      targetType: 'all',
-      uploadedAt: '2026-08-04',
-      category: 'قيم وأخلاق',
-      thumbnailUrl: 'https://images.unsplash.com/photo-1434030216411-0b793f4b4173?auto=format&fit=crop&q=80&w=600',
-    },
-    {
-      id: 'lib-5',
-      title: 'مجمع الملك فهد لطباعة المصحف الشريف 🔗',
-      description: 'رابط مباشر لتحميل مصحف المدينة النبوية وتطبيقات القرآن الكريم الرسمية.',
-      fileType: 'link',
-      url: 'https://qurancomplex.gov.sa',
-      fileSize: 'رابط خارجي',
-      targetType: 'all',
-      uploadedAt: '2026-08-05',
-      category: 'مصادر موثوقة',
-      thumbnailUrl: 'https://images.unsplash.com/photo-1542831371-29b0f74f9713?auto=format&fit=crop&q=80&w=600',
-    }
-  ]
-};
+const initialLibrary: Record<string, BatchLibraryItem[]> = {};
 
 // Seed Announcements per Batch
 const initialAnnouncements: Record<string, BatchAnnouncement[]> = {};
@@ -128,6 +65,34 @@ const isStaleRadioClub = (name?: string) =>
 function isUUID(str?: string): boolean {
   if (!str) return false;
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
+}
+
+export function normalizeArabic(str?: string): string {
+  if (!str) return '';
+  return str
+    .trim()
+    .toLowerCase()
+    .replace(/[\u064B-\u065F\u0670]/g, '') // Tashkeel
+    .replace(/[أإآٱ]/g, 'ا')
+    .replace(/ة/g, 'ه')
+    .replace(/ى/g, 'ي')
+    .replace(/\s+/g, ' ');
+}
+
+export function normalizeStudentCode(code?: string): string {
+  if (!code) return '';
+  const trimmed = code.trim();
+  // Purely numeric codes: "01" -> "1", "001" -> "1", "1" -> "1"
+  if (/^\d+$/.test(trimmed)) {
+    return String(parseInt(trimmed, 10));
+  }
+  // Compound codes with numeric prefix: "01-D" -> "1-D", "001-A+" -> "1-A+"
+  const match = trimmed.match(/^(\d+)([-_/\s].+)$/);
+  if (match) {
+    const numPart = String(parseInt(match[1], 10));
+    return `${numPart}${match[2].trim()}`;
+  }
+  return trimmed;
 }
 
 async function getRealStudentUuid(
@@ -200,115 +165,6 @@ function loadDbFromLocalStorage() {
     });
 
     if (needsSave) {
-      saveDbToLocalStorage();
-    }
-
-    if (batchesStore.length === 0) {
-      const defaultBatchId = 'batch-g6-f';
-      batchesStore = [
-        {
-          id: defaultBatchId,
-          name: 'دفعة طالبات الهدى - الصف السادس',
-          gender: 'female',
-          studentCount: 4,
-          classCount: 2,
-          clubCount: 2,
-          createdAt: '2026-08-01',
-          code: 'BTC-6F',
-          stage: 'الصف السادس',
-          description: 'دفعة عامة لتدبر وحفظ القرآن الكريم',
-          supervisorName: 'أ. هدى الزهراني',
-          colorGradient: 'from-rose-500/20 via-teal-500/20 to-emerald-500/20',
-        },
-      ];
-      classesStore[defaultBatchId] = [
-        {
-          id: 'class-1',
-          batchId: defaultBatchId,
-          name: 'الفصل E',
-          teacherName: 'أ. هدى الزهراني',
-          schedule: 'الأحد والثلاثاء - 4 عصراً',
-          room: 'قاعة 1',
-          studentCount: 2,
-          avgPoints: 0,
-          challengeCompletionRate: 100,
-          studentNames: ['مريم خليل الزهراني', 'هند سليمان المطيري'],
-        },
-        {
-          id: 'class-2',
-          batchId: defaultBatchId,
-          name: 'الفصل F',
-          teacherName: 'أ. هدى الزهراني',
-          schedule: 'الإثنين والأربعاء - 4 عصراً',
-          room: 'قاعة 2',
-          studentCount: 2,
-          avgPoints: 0,
-          challengeCompletionRate: 100,
-          studentNames: ['ندى عبد الرحمن القحطاني', 'أبرار محمد العتيبي'],
-        },
-      ];
-      studentsStore[defaultBatchId] = [
-        {
-          id: 'std-1',
-          batchId: defaultBatchId,
-          name: 'مريم خليل الزهراني',
-          studentCode: 'STU-101',
-          className: 'الفصل E',
-          clubName: 'نادي التلاوة الخاشعة',
-          levelBadge: '🌱 البداية',
-          points: 0,
-          completedTasks: 0,
-          completedChallengesCount: 0,
-          attendanceRate: 100,
-          status: 'active',
-          avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200',
-        },
-        {
-          id: 'std-2',
-          batchId: defaultBatchId,
-          name: 'هند سليمان المطيري',
-          studentCode: 'STU-102',
-          className: 'الفصل E',
-          clubName: 'نادي الإعلام والدعوة',
-          levelBadge: '🌱 البداية',
-          points: 0,
-          completedTasks: 0,
-          completedChallengesCount: 0,
-          attendanceRate: 95,
-          status: 'active',
-          avatarUrl: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&q=80&w=200',
-        },
-        {
-          id: 'std-3',
-          batchId: defaultBatchId,
-          name: 'ندى عبد الرحمن القحطاني',
-          studentCode: 'STU-103',
-          className: 'الفصل F',
-          clubName: 'بدون نادي',
-          levelBadge: '🌱 البداية',
-          points: 0,
-          completedTasks: 0,
-          completedChallengesCount: 0,
-          attendanceRate: 90,
-          status: 'active',
-          avatarUrl: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&q=80&w=200',
-        },
-        {
-          id: 'std-4',
-          batchId: defaultBatchId,
-          name: 'أبرار محمد العتيبي',
-          studentCode: 'STU-104',
-          className: 'الفصل F',
-          clubName: 'بدون نادي',
-          levelBadge: '🌱 البداية',
-          points: 0,
-          completedTasks: 0,
-          completedChallengesCount: 0,
-          attendanceRate: 85,
-          status: 'active',
-          avatarUrl: 'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&q=80&w=200',
-        },
-      ];
       saveDbToLocalStorage();
     }
   } catch (err) {
@@ -415,43 +271,40 @@ function computeBatchClubs(batchId: string): BatchClub[] {
  * Calculate the exact completed challenges count for a student based on real challenge records and approved submissions.
  */
 export function calculateStudentCompletedChallengesCount(
-  student: { id: string; studentCode?: string; name: string },
+  student: { id: string; studentCode?: string; name?: string },
   batchId: string,
   batchChallenges: BatchChallenge[],
   allSubmissions: PendingSubmission[]
 ): number {
   if (!batchChallenges) batchChallenges = [];
   if (!allSubmissions) allSubmissions = [];
+  if (!student || !student.id) return 0;
 
+  // STRICT REQUIREMENT: A submission belongs to a student ONLY when: submission.studentId === student.id
   const studentSubs = allSubmissions.filter(
-    (s) =>
-      s.status === 'approved' &&
-      (s.studentId === student.id ||
-        (s.studentCode && student.studentCode && s.studentCode.trim().toLowerCase() === student.studentCode.trim().toLowerCase()) ||
-        (s.studentName && student.name && s.studentName.trim().toLowerCase() === student.name.trim().toLowerCase()))
+    (s) => s.status === 'approved' && s.studentId === student.id
   );
 
-  const completedFromList = batchChallenges.filter((ch) => {
-    return studentSubs.some(
-      (s) =>
-        s.taskTitle === ch.title ||
-        s.sourceName === ch.title ||
-        (s as any).challengeId === ch.id
-    );
-  }).length;
-
   const matchedSubIds = new Set<string>();
-  batchChallenges.forEach((ch) => {
-    studentSubs.forEach((s) => {
-      if (
-        s.taskTitle === ch.title ||
-        s.sourceName === ch.title ||
-        (s as any).challengeId === ch.id
-      ) {
-        matchedSubIds.add(s.id);
+
+  // Challenge matching uses challengeId whenever available; fallback to title/sourceName for legacy
+  const completedFromList = batchChallenges.filter((ch) => {
+    return studentSubs.some((s) => {
+      const subChallengeId = (s as any).challengeId || s.challengeId;
+      if (subChallengeId && ch.id) {
+        if (subChallengeId === ch.id) {
+          matchedSubIds.add(s.id);
+          return true;
+        }
+        return false;
       }
+      if (s.taskTitle === ch.title || s.sourceName === ch.title) {
+        matchedSubIds.add(s.id);
+        return true;
+      }
+      return false;
     });
-  });
+  }).length;
 
   const unmatchedChallengeSubs = studentSubs.filter(
     (s) =>
@@ -490,52 +343,115 @@ export const teacherService = {
   },
 
   /**
-   * Get student and batch info by Student Code
+   * Get student and batch info by Student Code, scoped by batch and class if available
    */
-  async getStudentByCode(studentCode: string): Promise<{ student: BatchStudent; batch: Batch } | null> {
+  async getStudentByCode(
+    studentCode: string,
+    batchId?: string,
+    classId?: string
+  ): Promise<{ student: BatchStudent; batch: Batch } | null> {
     loadDbFromLocalStorage();
-    const cleanCode = studentCode.trim().toLowerCase();
+    const cleanCode = studentCode.trim();
+    const enteredNorm = normalizeStudentCode(cleanCode);
+    const numericCode = cleanCode.includes('-') ? cleanCode.split('-')[0].trim() : cleanCode;
+    const enteredNum = normalizeStudentCode(numericCode);
 
     if (isSupabaseConfigured) {
       try {
-        const { data: supaStudent } = await supabase
-          .from('students')
-          .select('*')
-          .ilike('student_code', cleanCode)
-          .maybeSingle();
+        let query = supabase.from('students').select('*');
+        if (batchId) query = query.eq('batch_id', batchId);
+        if (classId) query = query.eq('class_id', classId);
 
-        if (supaStudent && typeof supaStudent.points === 'number') {
-          for (const bId of Object.keys(studentsStore)) {
-            const list = studentsStore[bId] || [];
-            list.forEach((s) => {
-              if (
-                s.id === supaStudent.id ||
-                (s.studentCode && s.studentCode.trim().toLowerCase() === cleanCode) ||
-                (s.name && supaStudent.full_name && s.name.trim().toLowerCase() === supaStudent.full_name.trim().toLowerCase())
-              ) {
-                s.points = supaStudent.points;
-                s.levelBadge = computeDynamicLevelBadge(s);
-              }
-            });
-          }
-          saveDbToLocalStorage();
+        const candidateCodes = Array.from(
+          new Set([
+            cleanCode,
+            cleanCode.toLowerCase(),
+            cleanCode.toUpperCase(),
+            enteredNorm,
+            numericCode,
+            enteredNum,
+            /^\d+$/.test(numericCode) ? numericCode.padStart(2, '0') : null,
+            /^\d+$/.test(numericCode) ? numericCode.padStart(3, '0') : null,
+          ].filter(Boolean) as string[])
+        );
+
+        query = query.in('student_code', candidateCodes);
+
+        const { data: supaStudents } = await query;
+        const supaStudent = supaStudents && supaStudents.length > 0 ? supaStudents[0] : null;
+
+        if (supaStudent) {
+          const targetBatchId = supaStudent.batch_id;
+          const currentBatchClasses = classesStore[targetBatchId] || [];
+          const matchedClass = currentBatchClasses.find((c) => c.id === supaStudent.class_id);
+
+          const studentObj: BatchStudent = {
+            id: supaStudent.id,
+            batchId: targetBatchId,
+            name: supaStudent.full_name,
+            studentCode: supaStudent.student_code || '',
+            className: matchedClass ? matchedClass.name : '',
+            classId: supaStudent.class_id || undefined,
+            clubName: 'بدون نادي',
+            levelBadge: '🌱 البداية',
+            points: typeof supaStudent.points === 'number' ? supaStudent.points : 0,
+            completedTasks: 0,
+            completedChallengesCount: 0,
+            avatarUrl: supaStudent.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200',
+            status: supaStudent.status || 'active',
+          };
+          studentObj.levelBadge = computeDynamicLevelBadge(studentObj);
+
+          const batch: Batch = batchesStore.find((b) => b.id === targetBatchId) || {
+            id: targetBatchId,
+            name: 'الدفعة العامة',
+            gender: 'female',
+            studentCount: (studentsStore[targetBatchId] || []).length,
+            classCount: (classesStore[targetBatchId] || []).length,
+            clubCount: (clubsStore[targetBatchId] || []).length,
+            createdAt: '2026-08-01',
+            code: 'BTC-100',
+            stage: 'عامة',
+            description: 'دفعة عامة',
+            supervisorName: 'المشرفة العامة',
+            colorGradient: 'from-rose-500/20 via-teal-500/20 to-emerald-500/20',
+          };
+
+          return { student: studentObj, batch };
+        } else {
+          // When Supabase is configured and student is not found remotely, never resurrect from local cache
+          return null;
         }
       } catch (err) {
         console.warn('getStudentByCode Supabase sync warning:', err);
+        return null;
       }
     }
 
-    for (const batchId of Object.keys(studentsStore)) {
-      const list = studentsStore[batchId] || [];
-      const found = list.find((s) => s.studentCode && s.studentCode.trim().toLowerCase() === cleanCode);
+    const batchesToSearch = batchId ? [batchId] : Object.keys(studentsStore);
+    for (const bId of batchesToSearch) {
+      const list = studentsStore[bId] || [];
+      const found = list.find((s) => {
+        if (classId && s.classId && s.classId !== classId) return false;
+        const sCode = (s.studentCode || '').trim();
+        const sNorm = normalizeStudentCode(sCode);
+        const sNum = normalizeStudentCode(sCode.includes('-') ? sCode.split('-')[0].trim() : sCode);
+        return (
+          sCode.toLowerCase() === cleanCode.toLowerCase() ||
+          sNorm.toLowerCase() === enteredNorm.toLowerCase() ||
+          sNum.toLowerCase() === enteredNum.toLowerCase() ||
+          enteredNorm.toLowerCase() === sNum.toLowerCase() ||
+          sNorm.toLowerCase() === enteredNum.toLowerCase()
+        );
+      });
       if (found) {
-        const batch: Batch = batchesStore.find((b) => b.id === batchId) || {
-          id: batchId,
+        const batch: Batch = batchesStore.find((b) => b.id === bId) || {
+          id: bId,
           name: 'الدفعة العامة',
           gender: 'female',
           studentCount: list.length,
-          classCount: 1,
-          clubCount: 1,
+          classCount: (classesStore[bId] || []).length,
+          clubCount: (clubsStore[bId] || []).length,
           createdAt: '2026-08-01',
           code: 'BTC-100',
           stage: 'عامة',
@@ -553,28 +469,15 @@ export const teacherService = {
   /**
    * Get full student context for Student App
    */
-  async getStudentFullContext(studentId: string) {
+  /**
+   * Get full student context for Student App
+   */
+  async getStudentFullContext(studentId: string, studentCode?: string) {
     loadDbFromLocalStorage();
     const cleanId = studentId ? studentId.trim() : '';
-    const cleanIdLower = cleanId.toLowerCase();
+    if (!cleanId) return null;
 
-    // First, locate student in studentsStore to retrieve local metadata (including studentCode if available)
-    let localStudent: any = null;
-    let localBatchId: string = '';
-    for (const bId of Object.keys(studentsStore)) {
-      const list = studentsStore[bId] || [];
-      const found = list.find(
-        (s) =>
-          s.id === cleanId ||
-          (s.studentCode && s.studentCode.trim().toLowerCase() === cleanIdLower) ||
-          (s.name && s.name.trim().toLowerCase() === cleanIdLower)
-      );
-      if (found) {
-        localStudent = found;
-        localBatchId = bId;
-        break;
-      }
-    }
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanId);
 
     const debugInfo: any = {
       studentId: cleanId,
@@ -594,18 +497,16 @@ export const teacherService = {
       isSupabaseConfigured,
     };
 
-    console.log('[TRACE 1] getStudentFullContext received studentId:', studentId);
-
     let supaClubItem: BatchClub | null = null;
     let supaClubName: string | null = null;
     let supaClubId: string | null = null;
     let supaStudent: any = null;
 
-    if (isSupabaseConfigured && cleanId) {
+    if (isSupabaseConfigured) {
       try {
-        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanId);
-
         if (isUuid) {
+          // REQUIREMENT 1: Query public.students ONLY by id = studentId.
+          // Do NOT fall back to student_code or full_name if UUID lookup fails.
           const { data, error } = await supabase
             .from('students')
             .select('*')
@@ -613,59 +514,75 @@ export const teacherService = {
             .maybeSingle();
           supaStudent = data;
           debugInfo.supaStudentQuery = { data, error: error ? error.message : null };
-        }
-
-        if (!supaStudent) {
+          if (!supaStudent) {
+            debugInfo.isRlsBlocked = true;
+          }
+        } else {
+          // Only for legacy non-UUID strings
           const { data, error } = await supabase
             .from('students')
             .select('*')
             .ilike('student_code', cleanId)
             .maybeSingle();
           if (data) supaStudent = data;
-          if (!debugInfo.supaStudentQuery) {
-            debugInfo.supaStudentQuery = { data, error: error ? error.message : null };
-          }
+          debugInfo.supaStudentQuery = { data, error: error ? error.message : null };
         }
 
-        if (!supaStudent) {
-          const { data, error } = await supabase
-            .from('students')
-            .select('*')
-            .ilike('full_name', cleanId)
-            .maybeSingle();
-          if (data) supaStudent = data;
-          if (!debugInfo.supaStudentQuery) {
-            debugInfo.supaStudentQuery = { data, error: error ? error.message : null };
-          }
-        }
-
-        if (!supaStudent && localStudent?.studentCode) {
-          const { data } = await supabase
-            .from('students')
-            .select('*')
-            .ilike('student_code', localStudent.studentCode.trim())
-            .maybeSingle();
-          if (data) supaStudent = data;
-        }
-
-        if (!supaStudent && localStudent?.name) {
-          const { data } = await supabase
-            .from('students')
-            .select('*')
-            .ilike('full_name', localStudent.name.trim())
-            .maybeSingle();
-          if (data) supaStudent = data;
-        }
-
+        // If direct query returned 0 rows (e.g. unauthenticated student portal blocked by RLS),
+        // try the secure RPC if we have studentCode available
         if (!supaStudent && isUuid) {
-          // Explicit diagnostic: supaStudent is null because anonymous RLS blocks public.students SELECT
-          debugInfo.isRlsBlocked = true;
+          let codeForRpc = studentCode;
+          if (!codeForRpc) {
+            try {
+              const stored = localStorage.getItem('rihlat_logged_student_code_v1');
+              if (stored) {
+                const parsed = JSON.parse(stored);
+                if (parsed?.studentCode && parsed?.studentId === cleanId) {
+                  codeForRpc = parsed.studentCode;
+                }
+              }
+            } catch (e) {
+              // ignore
+            }
+          }
+
+          if (codeForRpc && codeForRpc.trim()) {
+            const { data: rpcData, error: rpcErr } = await supabase.rpc('get_student_portal_profile', {
+              p_student_id: cleanId,
+              p_student_code: codeForRpc.trim(),
+            });
+            if (!rpcErr && rpcData && Array.isArray(rpcData) && rpcData.length > 0) {
+              const rRow = rpcData[0];
+              supaStudent = {
+                id: rRow.student_id,
+                batch_id: rRow.batch_id,
+                class_id: rRow.class_id,
+                student_code: rRow.student_code,
+                full_name: rRow.full_name,
+                points: rRow.points,
+                avatar_url: rRow.avatar_url,
+                status: rRow.status,
+              };
+              if (rRow.club_id || rRow.club_name) {
+                supaClubId = rRow.club_id;
+                supaClubName = rRow.club_name;
+                supaClubItem = {
+                  id: rRow.club_id || 'club-temp',
+                  batchId: rRow.batch_id,
+                  name: rRow.club_name || 'النادي',
+                  description: rRow.club_description || '',
+                  supervisorName: '',
+                  category: rRow.club_category || 'عام',
+                  memberCount: 1,
+                  activeTasksCount: 0,
+                  members: [],
+                };
+              }
+            }
+          }
         }
 
-        let dbBatchId = supaStudent?.batch_id || localBatchId;
-        let dbPoints = typeof supaStudent?.points === 'number' ? supaStudent.points : (localStudent?.points || 0);
-
-        if (supaStudent) {
+        if (supaStudent && !supaClubItem) {
           debugInfo.supaStudentId = supaStudent.id;
 
           // Query public.club_members to resolve student's assigned club
@@ -675,9 +592,6 @@ export const teacherService = {
             .eq('student_id', supaStudent.id)
             .maybeSingle();
 
-          console.log('[TRACE 3] club_members query data:', memberData);
-          console.log('[TRACE 3] club_members query error:', memberErr);
-
           debugInfo.hasMemberData = !!memberData;
           debugInfo.memberDataClubId = memberData?.club_id || null;
           debugInfo.memberDataClubs = memberData?.clubs ? JSON.stringify(memberData.clubs) : null;
@@ -686,7 +600,6 @@ export const teacherService = {
           const rawClub = memberData?.clubs;
           let clubObj = Array.isArray(rawClub) ? rawClub[0] : rawClub;
 
-          // Fallback: If joined clubs is null but club_id exists in club_members, fetch club directly
           if (!clubObj && memberData?.club_id) {
             const { data: directClub } = await supabase
               .from('clubs')
@@ -704,122 +617,254 @@ export const teacherService = {
             supaClubId = clubObj.id;
             supaClubName = clubObj.name;
           }
-        } else {
-          // supaStudent is null (anonymous user). Verify student identity & club via SECURITY DEFINER RPC
-          const studentCodeToUse = localStudent?.studentCode || supaStudent?.student_code || cleanId;
-          const studentUuidToUse = isUuid ? cleanId : localStudent?.id;
-
-          if (studentUuidToUse && studentCodeToUse) {
-            const { data: rpcChallenges, error: rpcErr } = await supabase.rpc('get_student_challenges', {
-              p_student_id: studentUuidToUse,
-              p_student_code: studentCodeToUse
-            });
-
-            debugInfo.rpcVerification = { data: rpcChallenges, error: rpcErr ? rpcErr.message : null };
-
-            if (Array.isArray(rpcChallenges)) {
-              const clubChallenge = rpcChallenges.find((c: any) => c.target_type === 'club');
-              if (clubChallenge && clubChallenge.target_id && clubChallenge.target_name) {
-                supaClubId = clubChallenge.target_id;
-                supaClubName = clubChallenge.target_name;
-              }
-            }
-          }
-        }
-
-        // Secondary resolution: If we have clubId or clubName, resolve full club details from clubsStore
-        const targetClubId = supaClubId || localStudent?.clubId;
-        const targetClubName = supaClubName || localStudent?.clubName;
-
-        if (targetClubId || (targetClubName && targetClubName !== 'بدون نادي')) {
-          const allClubs = Object.values(clubsStore).flat();
-          const matchedClub = allClubs.find(
-            (c) =>
-              (targetClubId && c.id === targetClubId) ||
-              (targetClubName && c.name.trim().toLowerCase() === targetClubName.trim().toLowerCase())
-          );
-
-          if (matchedClub) {
-            supaClubId = matchedClub.id;
-            supaClubName = matchedClub.name;
-            supaClubItem = {
-              id: matchedClub.id,
-              batchId: matchedClub.batchId || dbBatchId || 'default-batch',
-              name: matchedClub.name,
-              description: matchedClub.description || '',
-              supervisorName: matchedClub.supervisorName || '',
-              category: matchedClub.category || 'عام',
-              memberCount: 1,
-              activeTasksCount: 0,
-              members: []
-            };
-          }
-        }
-
-        if (supaStudent) {
-          let syncedAny = false;
-          for (const bId of Object.keys(studentsStore)) {
-            const list = studentsStore[bId] || [];
-            list.forEach((s) => {
-              if (
-                s.id === supaStudent.id ||
-                (s.studentCode && supaStudent.student_code && s.studentCode.trim().toLowerCase() === supaStudent.student_code.trim().toLowerCase()) ||
-                (s.name && supaStudent.full_name && s.name.trim().toLowerCase() === supaStudent.full_name.trim().toLowerCase()) ||
-                s.id === cleanId ||
-                (s.studentCode && s.studentCode.trim().toLowerCase() === cleanIdLower) ||
-                (localStudent && (s.id === localStudent.id || (s.studentCode && localStudent.studentCode && s.studentCode.trim().toLowerCase() === localStudent.studentCode.trim().toLowerCase())))
-              ) {
-                if (typeof supaStudent.points === 'number') {
-                  s.points = supaStudent.points;
-                }
-                if (supaStudent.id) s.id = supaStudent.id;
-                if (supaStudent.full_name) s.name = supaStudent.full_name;
-                if (supaStudent.avatar_url) s.avatarUrl = supaStudent.avatar_url;
-                if (supaStudent.status) s.status = supaStudent.status;
-                if (supaClubName !== null) {
-                  s.clubName = supaClubName;
-                  s.clubId = supaClubId || undefined;
-                }
-                s.levelBadge = computeDynamicLevelBadge(s);
-                syncedAny = true;
-              }
-            });
-          }
-          if (syncedAny) {
-            saveDbToLocalStorage();
-          }
         }
       } catch (err) {
-        console.warn('Failed to fetch/sync student points or club from Supabase in getStudentFullContext:', err);
+        console.warn('Failed to fetch student/club from Supabase in getStudentFullContext:', err);
       }
     }
 
+    // IF SUPABASE RETURNED THE STUDENT (AUTHORITATIVE SOURCE OF TRUTH):
+    if (supaStudent) {
+      const targetBatchId = supaStudent.batch_id;
+      const targetClassId = supaStudent.class_id;
+
+      // Resolve className from public.classes using classId
+      let resolvedClassItem: BatchClass | null = null;
+      let resolvedClassName: string = '';
+
+      if (targetClassId) {
+        const currentBatchClasses = classesStore[targetBatchId] || [];
+        const localClass = currentBatchClasses.find((c) => c.id === targetClassId);
+        if (localClass) {
+          resolvedClassItem = localClass;
+          resolvedClassName = localClass.name;
+        } else if (isSupabaseConfigured) {
+          try {
+            const { data: supaClass } = await supabase
+              .from('classes')
+              .select('*')
+              .eq('id', targetClassId)
+              .maybeSingle();
+            if (supaClass) {
+              resolvedClassItem = {
+                id: supaClass.id,
+                batchId: supaClass.batch_id,
+                name: supaClass.name,
+                teacherName: supaClass.teacher_name || '',
+                studentCount: supaClass.student_count || 0,
+                avgPoints: 0,
+                challengeCompletionRate: 100,
+                studentNames: [],
+                schedule: supaClass.schedule || '',
+                room: supaClass.room || '',
+              };
+              resolvedClassName = supaClass.name;
+              if (!classesStore[targetBatchId]) classesStore[targetBatchId] = [];
+              classesStore[targetBatchId].push(resolvedClassItem);
+            }
+          } catch (clsErr) {
+            console.warn('Failed to fetch class for student from Supabase:', clsErr);
+          }
+        }
+      }
+
+      // Resolve club item
+      if (supaClubId || (supaClubName && supaClubName !== 'بدون نادي')) {
+        const allClubs = Object.values(clubsStore).flat();
+        const matchedClub = allClubs.find(
+          (c) =>
+            (supaClubId && c.id === supaClubId) ||
+            (supaClubName && c.name.trim().toLowerCase() === supaClubName.trim().toLowerCase())
+        );
+        if (matchedClub) {
+          supaClubId = matchedClub.id;
+          supaClubName = matchedClub.name;
+          supaClubItem = {
+            id: matchedClub.id,
+            batchId: matchedClub.batchId || targetBatchId,
+            name: matchedClub.name,
+            description: matchedClub.description || '',
+            supervisorName: matchedClub.supervisorName || '',
+            category: matchedClub.category || 'عام',
+            memberCount: 1,
+            activeTasksCount: 0,
+            members: [],
+          };
+        } else if (supaClubName) {
+          supaClubItem = {
+            id: supaClubId || 'club-temp',
+            batchId: targetBatchId,
+            name: supaClubName,
+            description: '',
+            supervisorName: '',
+            category: 'عام',
+            memberCount: 1,
+            activeTasksCount: 0,
+            members: [],
+          };
+        }
+      }
+
+      // Fetch authoritative submissions for this student from Supabase
+      if (isSupabaseConfigured) {
+        try {
+          const { data: supaSubs } = await supabase
+            .from('challenge_submissions')
+            .select('*, challenges(title, category, reward_xp)')
+            .eq('batch_id', targetBatchId)
+            .eq('student_id', supaStudent.id);
+
+          if (supaSubs) {
+            const currentBatchSubs = submissionsStore[targetBatchId] || [];
+            // Remove any cached submissions for this specific student UUID
+            const otherSubs = currentBatchSubs.filter((s) => s.studentId !== supaStudent.id);
+            const studentSubs: PendingSubmission[] = supaSubs.map((ss: any) => ({
+              id: ss.id,
+              batchId: ss.batch_id,
+              studentId: ss.student_id,
+              studentCode: supaStudent.student_code || '',
+              studentName: supaStudent.full_name || 'طالب',
+              studentAvatar: supaStudent.avatar_url || '',
+              className: resolvedClassName || 'الفصل',
+              sourceType: ss.source_type || 'challenge',
+              sourceName: ss.source_name || ss.challenges?.title || 'تحدي',
+              contentSummary: ss.submission_content || 'تم تنفيذ التحدي بنجاح',
+              taskTitle: ss.challenges?.title || ss.source_name || 'تحدي',
+              submittedAt: ss.submitted_at ? new Date(ss.submitted_at).toLocaleDateString('ar-EG') : 'الآن',
+              status: ss.status || 'pending',
+              rewardXp: ss.reward_xp || ss.challenges?.reward_xp || 50,
+              teacherNotes: ss.teacher_notes || undefined,
+              challengeId: ss.challenge_id || undefined,
+            }));
+            submissionsStore[targetBatchId] = [...studentSubs, ...otherSubs];
+          }
+        } catch (subErr) {
+          console.warn('Failed to fetch student submissions from Supabase in getStudentFullContext:', subErr);
+        }
+      }
+
+      const allBatchSubs = submissionsStore[targetBatchId] || [];
+
+      // Build student object for challenge calculation
+      const studentForCalc: BatchStudent = {
+        id: supaStudent.id,
+        batchId: targetBatchId,
+        name: supaStudent.full_name,
+        studentCode: supaStudent.student_code || '',
+        className: resolvedClassName || '',
+        classId: targetClassId || undefined,
+        clubName: supaClubName || 'بدون نادي',
+        clubId: supaClubId || undefined,
+        points: typeof supaStudent.points === 'number' ? supaStudent.points : 0,
+        completedChallengesCount: 0,
+        completedTasks: 0,
+        avatarUrl: supaStudent.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200',
+        status: supaStudent.status || 'active',
+        levelBadge: '🌱 البداية',
+      };
+
+      const challenges = await this.getChallengesForStudent(studentForCalc, targetBatchId);
+      const finalCompletedCount = calculateStudentCompletedChallengesCount(
+        studentForCalc,
+        targetBatchId,
+        challenges,
+        allBatchSubs
+      );
+
+      const finalPoints = typeof supaStudent.points === 'number' ? supaStudent.points : 0;
+
+      // Update / replace in studentsStore for targetBatchId strictly by UUID
+      if (!studentsStore[targetBatchId]) studentsStore[targetBatchId] = [];
+
+      // Clean up this student UUID from any other batches
+      Object.keys(studentsStore).forEach((bId) => {
+        if (bId !== targetBatchId) {
+          studentsStore[bId] = (studentsStore[bId] || []).filter((s) => s.id !== supaStudent.id);
+        }
+      });
+
+      const batchList = studentsStore[targetBatchId];
+      const existingIdx = batchList.findIndex((s) => s.id === supaStudent.id);
+
+      const updatedStudent: BatchStudent = {
+        id: supaStudent.id,
+        batchId: targetBatchId,
+        name: supaStudent.full_name,
+        studentCode: supaStudent.student_code || '',
+        className: resolvedClassName || '',
+        classId: targetClassId || undefined,
+        clubName: supaClubName || 'بدون نادي',
+        clubId: supaClubId || undefined,
+        points: finalPoints,
+        completedChallengesCount: finalCompletedCount,
+        completedTasks: 0,
+        avatarUrl: supaStudent.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200',
+        status: supaStudent.status || 'active',
+        levelBadge: '🌱 البداية',
+      };
+      updatedStudent.levelBadge = computeDynamicLevelBadge(updatedStudent);
+
+      if (existingIdx !== -1) {
+        batchList[existingIdx] = updatedStudent;
+      } else {
+        batchList.push(updatedStudent);
+      }
+      studentsStore[targetBatchId] = batchList;
+      saveDbToLocalStorage();
+
+      const batch: Batch = batchesStore.find((b) => b.id === targetBatchId) || {
+        id: targetBatchId,
+        name: 'الدفعة العامة',
+        gender: 'female',
+        studentCount: batchList.length,
+        classCount: (classesStore[targetBatchId] || []).length,
+        clubCount: (clubsStore[targetBatchId] || []).length,
+        createdAt: '2026-08-01',
+        code: 'BTC-100',
+        stage: 'عامة',
+        description: 'دفعة عامة',
+        supervisorName: 'المشرفة العامة',
+        colorGradient: 'from-rose-500/20 via-teal-500/20 to-emerald-500/20',
+      };
+
+      const classes = classesStore[targetBatchId] || [];
+      const classItem = resolvedClassItem || classes.find((c) => (updatedStudent.classId ? c.id === updatedStudent.classId : c.name === updatedStudent.className)) || null;
+      const library = await this.getLibraryByBatch(targetBatchId);
+      const announcements = this.getMessagesForStudent(updatedStudent, targetBatchId);
+      const submissions = submissionsStore[targetBatchId] || [];
+      const allBatchStudents = batchList.map((s) => ({ ...s, levelBadge: computeDynamicLevelBadge(s) }));
+
+      return {
+        student: updatedStudent,
+        batch,
+        classItem,
+        clubItem: supaClubItem,
+        challenges,
+        library,
+        announcements,
+        submissions,
+        allBatchStudents,
+        debugInfo,
+      };
+    }
+
+    // IF SUPABASE IS CONFIGURED AND STUDENT WAS NOT FOUND REMOTELY:
+    if (isSupabaseConfigured) {
+      // Safe handling path: student is not in Supabase.
+      // Clean up any stale local student cache for this ID to prevent cache corruption
+      Object.keys(studentsStore).forEach((bId) => {
+        studentsStore[bId] = (studentsStore[bId] || []).filter((s) => s.id !== cleanId && s.studentCode !== cleanId);
+      });
+      saveDbToLocalStorage();
+      return null;
+    }
+
+    // IF OFFLINE MODE ONLY (!isSupabaseConfigured):
     for (const batchId of Object.keys(studentsStore)) {
       const list = studentsStore[batchId] || [];
-      const student = list.find(
-        (s) =>
-          s.id === studentId ||
-          (s.studentCode && s.studentCode.trim().toLowerCase() === cleanIdLower) ||
-          (s.name && s.name.trim().toLowerCase() === cleanIdLower) ||
-          (supaStudent && (
-            s.id === supaStudent.id ||
-            (s.studentCode && supaStudent.student_code && s.studentCode.trim().toLowerCase() === supaStudent.student_code.trim().toLowerCase()) ||
-            (s.name && supaStudent.full_name && s.name.trim().toLowerCase() === supaStudent.full_name.trim().toLowerCase())
-          ))
-      );
+      const student = list.find((s) => (isUuid ? s.id === cleanId : s.id === cleanId || (s.studentCode && s.studentCode.trim().toLowerCase() === cleanId.toLowerCase())));
       if (student) {
-        if (supaStudent && typeof supaStudent.points === 'number') {
-          student.points = supaStudent.points;
-        }
-        if (supaClubName && supaClubName !== 'بدون نادي') {
-          student.clubName = supaClubName;
-          student.clubId = supaClubId || student.clubId || undefined;
-        } else if (supaClubName === 'بدون نادي') {
-          student.clubName = 'بدون نادي';
-          student.clubId = undefined;
-        }
-
-        const allSubs = Object.values(submissionsStore).flat();
+        const allSubs = submissionsStore[batchId] || [];
         const challenges = await this.getChallengesForStudent(student, batchId);
         const finalCompletedCount = calculateStudentCompletedChallengesCount(
           student,
@@ -827,31 +872,17 @@ export const teacherService = {
           challenges,
           allSubs
         );
-
-        const finalPoints = (supaStudent && typeof supaStudent.points === 'number')
-          ? supaStudent.points
-          : student.points;
-
-        student.points = finalPoints;
         student.completedChallengesCount = finalCompletedCount;
-        student.levelBadge = computeDynamicLevelBadge({ ...student, points: finalPoints, completedChallengesCount: finalCompletedCount });
-
+        student.levelBadge = computeDynamicLevelBadge(student);
         saveDbToLocalStorage();
 
-        const updatedStudent = {
-          ...student,
-          points: finalPoints,
-          completedChallengesCount: finalCompletedCount,
-          levelBadge: computeDynamicLevelBadge({ ...student, points: finalPoints, completedChallengesCount: finalCompletedCount }),
-        };
-        console.log('[DEBUG 3] Student object immediately after loading:', updatedStudent);
         const batch: Batch = batchesStore.find((b) => b.id === batchId) || {
           id: batchId,
           name: 'الدفعة العامة',
           gender: 'female',
           studentCount: list.length,
-          classCount: 1,
-          clubCount: 1,
+          classCount: (classesStore[batchId] || []).length,
+          clubCount: (clubsStore[batchId] || []).length,
           createdAt: '2026-08-01',
           code: 'BTC-100',
           stage: 'عامة',
@@ -860,30 +891,16 @@ export const teacherService = {
           colorGradient: 'from-rose-500/20 via-teal-500/20 to-emerald-500/20',
         };
         const classes = classesStore[batchId] || [];
-        const classItem = classes.find((c) => c.name === updatedStudent.className) || null;
+        const classItem = classes.find((c) => (student.classId ? c.id === student.classId : c.name === student.className)) || null;
         const clubs = clubsStore[batchId] || [];
-        const clubItem = supaClubItem || (
-          updatedStudent.clubName && updatedStudent.clubName !== 'بدون نادي'
-            ? clubs.find((c) => c.id === updatedStudent.clubId || c.name === updatedStudent.clubName) || null
-            : null
-        );
+        const clubItem = student.clubId ? clubs.find((c) => c.id === student.clubId) || null : (student.clubName && student.clubName !== 'بدون نادي' ? clubs.find((c) => c.name === student.clubName) || null : null);
         const library = await this.getLibraryByBatch(batchId);
-        const announcements = this.getMessagesForStudent(updatedStudent, batchId);
+        const announcements = this.getMessagesForStudent(student, batchId);
         const submissions = submissionsStore[batchId] || [];
         const allBatchStudents = list.map((s) => ({ ...s, levelBadge: computeDynamicLevelBadge(s) }));
 
-        console.log('[TRACE Return] student.clubId:', updatedStudent.clubId);
-        console.log('[TRACE Return] student.clubName:', updatedStudent.clubName);
-        console.log('[TRACE Return] supaClubItem:', supaClubItem);
-        console.log('[TRACE Return] clubItem:', clubItem);
-
-        debugInfo.studentClubId = updatedStudent.clubId || null;
-        debugInfo.studentClubName = updatedStudent.clubName || null;
-        debugInfo.supaClubItem = supaClubItem ? JSON.stringify(supaClubItem) : null;
-        debugInfo.clubItem = clubItem ? JSON.stringify(clubItem) : null;
-
         return {
-          student: updatedStudent,
+          student,
           batch,
           classItem,
           clubItem,
@@ -896,6 +913,7 @@ export const teacherService = {
         };
       }
     }
+
     return null;
   },
 
@@ -907,6 +925,250 @@ export const teacherService = {
     loadDbFromLocalStorage();
     const batch = batchesStore.find((b) => b.id === batchId);
     return batch?.stations;
+  },
+
+  /**
+   * Fetch batches for the student portal discovery (secure RPC, safe for anon)
+   */
+  async getPortalBatches(): Promise<Batch[]> {
+    if (isSupabaseConfigured) {
+      try {
+        const { data, error } = await supabase.rpc('get_portal_batches');
+        if (!error && data && Array.isArray(data)) {
+          return data.map((b: any) => ({
+            id: b.id,
+            name: b.name,
+            code: '',
+            stage: b.stage || 'المرحلة العامة',
+            supervisorName: '',
+            description: '',
+            gender: (b.gender as any) || 'female',
+            colorGradient: b.color_gradient || 'from-rose-500/20 via-teal-500/20 to-emerald-500/20',
+            createdAt: '',
+            studentCount: 0,
+            classCount: 0,
+            clubCount: 0,
+          }));
+        }
+      } catch (err) {
+        console.warn('Failed to fetch portal batches via RPC:', err);
+      }
+    }
+    loadDbFromLocalStorage();
+    return batchesStore || [];
+  },
+
+  /**
+   * Fetch classes for a specific batch for the student portal discovery (secure RPC, safe for anon)
+   */
+  async getPortalClasses(batchId: string): Promise<BatchClass[]> {
+    if (!batchId) return [];
+    if (isSupabaseConfigured) {
+      try {
+        const { data, error } = await supabase.rpc('get_portal_classes', { p_batch_id: batchId });
+        if (!error && data && Array.isArray(data)) {
+          return data.map((c: any) => ({
+            id: c.id,
+            batchId: c.batch_id,
+            name: c.name,
+            teacherName: '',
+            studentCount: 0,
+            avgPoints: 0,
+            challengeCompletionRate: 100,
+            studentNames: [],
+            schedule: c.schedule || '',
+            room: c.room || '',
+          }));
+        }
+      } catch (err) {
+        console.warn('Failed to fetch portal classes via RPC:', err);
+      }
+    }
+    loadDbFromLocalStorage();
+    return classesStore[batchId] || [];
+  },
+
+  /**
+   * Secure student portal login via security definer RPC
+   */
+  async studentPortalLogin(params: {
+    batchId: string;
+    classId: string;
+    studentCode: string;
+    studentName: string;
+  }): Promise<{ success: boolean; error?: string; context?: any }> {
+    const { batchId, classId, studentCode, studentName } = params;
+    const cleanCode = (studentCode || '').trim();
+    const cleanName = (studentName || '').trim();
+
+    if (!batchId || !classId || !cleanCode || !cleanName) {
+      return {
+        success: false,
+        error: 'يرجى اختيار الدفعة والفصل وإدخال الاسم الثلاثي وكود الطالب لدخول الرحلة.',
+      };
+    }
+
+    if (isSupabaseConfigured) {
+      try {
+        const { data, error } = await supabase.rpc('student_portal_login', {
+          p_batch_id: batchId,
+          p_class_id: classId,
+          p_student_code: cleanCode,
+          p_student_name: cleanName,
+        });
+
+        if (!error && data && Array.isArray(data) && data.length > 0) {
+          const row = data[0];
+          const studentObj: BatchStudent = {
+            id: row.student_id,
+            batchId: row.batch_id,
+            name: row.full_name,
+            studentCode: row.student_code,
+            className: row.class_name || '',
+            classId: row.class_id,
+            clubName: row.club_name || 'بدون نادي',
+            clubId: row.club_id || undefined,
+            points: typeof row.points === 'number' ? row.points : 0,
+            completedChallengesCount: 0,
+            completedTasks: 0,
+            avatarUrl: row.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200',
+            status: (row.status as any) || 'active',
+            levelBadge: '🌱 البداية',
+          };
+          studentObj.levelBadge = computeDynamicLevelBadge(studentObj);
+
+          const batchObj: Batch = {
+            id: row.batch_id,
+            name: row.batch_name || 'الدفعة',
+            gender: 'female',
+            studentCount: 1,
+            classCount: 1,
+            clubCount: 1,
+            createdAt: '',
+            code: '',
+            stage: '',
+            description: '',
+            supervisorName: '',
+            colorGradient: 'from-rose-500/20 via-teal-500/20 to-emerald-500/20',
+          };
+
+          const classObj: BatchClass = {
+            id: row.class_id,
+            batchId: row.batch_id,
+            name: row.class_name || '',
+            teacherName: '',
+            studentCount: 1,
+            avgPoints: 0,
+            challengeCompletionRate: 100,
+            studentNames: [],
+            schedule: '',
+            room: '',
+          };
+
+          let clubObj: BatchClub | null = null;
+          if (row.club_id || row.club_name) {
+            clubObj = {
+              id: row.club_id || 'club-temp',
+              batchId: row.batch_id,
+              name: row.club_name || 'النادي',
+              description: row.club_description || '',
+              supervisorName: '',
+              category: row.club_category || 'عام',
+              memberCount: 1,
+              activeTasksCount: 0,
+              members: [],
+            };
+          }
+
+          // Fetch student challenges and submissions via secure RPCs
+          const challenges = await this.getChallengesForStudent(studentObj, row.batch_id);
+          const submissions = await this.getStudentSubmissions(row.batch_id, studentObj.id, studentObj.studentCode);
+
+          // Update local store student cache strictly with the verified DB student
+          if (!studentsStore[row.batch_id]) studentsStore[row.batch_id] = [];
+          const existingIdx = studentsStore[row.batch_id].findIndex((s) => s.id === studentObj.id);
+          if (existingIdx !== -1) {
+            studentsStore[row.batch_id][existingIdx] = studentObj;
+          } else {
+            studentsStore[row.batch_id].push(studentObj);
+          }
+          saveDbToLocalStorage();
+
+          const context = {
+            student: studentObj,
+            batch: batchObj,
+            classItem: classObj,
+            clubItem: clubObj,
+            challenges,
+            submissions,
+          };
+
+          try {
+            localStorage.setItem(
+              'rihlat_logged_student_code_v1',
+              JSON.stringify({
+                studentId: studentObj.id,
+                studentCode: studentObj.studentCode,
+                batchId: studentObj.batchId,
+                classId: studentObj.classId,
+              })
+            );
+          } catch (e) {
+            // ignore
+          }
+
+          return { success: true, context };
+        } else if (error) {
+          console.warn('student_portal_login RPC fallback:', error?.message || error);
+        }
+      } catch (err: any) {
+        console.warn('studentPortalLogin exception, falling back to local verification:', err);
+      }
+    }
+
+    // Local-only fallback
+    loadDbFromLocalStorage();
+    const batchStudents = studentsStore[batchId] || [];
+    const targetClass = (classesStore[batchId] || []).find((c) => c.id === classId);
+    const enteredNorm = normalizeStudentCode(cleanCode);
+    const numericCode = cleanCode.includes('-') ? cleanCode.split('-')[0].trim() : cleanCode;
+    const enteredNum = normalizeStudentCode(numericCode);
+
+    const inputTokens = normalizeArabic(cleanName).split(' ').filter(Boolean);
+    const numTokens = Math.min(3, Math.max(1, inputTokens.length));
+    const normalizedInput = inputTokens.slice(0, numTokens).join(' ');
+
+    const matched = batchStudents.filter((st) => {
+      if (st.batchId !== batchId) return false;
+      const matchesClass = st.classId ? st.classId === classId : targetClass && st.className === targetClass.name;
+      if (!matchesClass) return false;
+
+      const stCodeClean = (st.studentCode || '').trim();
+      const stNorm = normalizeStudentCode(stCodeClean);
+      const stNum = normalizeStudentCode(stCodeClean.includes('-') ? stCodeClean.split('-')[0].trim() : stCodeClean);
+
+      const matchesCode =
+        stCodeClean.toLowerCase() === cleanCode.toLowerCase() ||
+        stNorm.toLowerCase() === enteredNorm.toLowerCase() ||
+        stNum.toLowerCase() === enteredNum.toLowerCase() ||
+        stNorm.toLowerCase() === enteredNum.toLowerCase() ||
+        enteredNorm.toLowerCase() === stNum.toLowerCase();
+
+      if (!matchesCode) return false;
+
+      const stNameTokens = normalizeArabic(st.name).split(' ').filter(Boolean).slice(0, numTokens).join(' ');
+      return stNameTokens === normalizedInput;
+    });
+
+    if (matched.length === 0) {
+      return { success: false, error: 'بيانات الطالب غير صحيحة، تأكد من الدفعة، الفصل، الاسم والكود.' };
+    }
+    if (matched.length > 1) {
+      return { success: false, error: 'توجد بيانات مكررة لهذا الطالب في هذا الفصل. يرجى التواصل مع المعلم لتصحيح البيانات.' };
+    }
+
+    const ctx = await this.getStudentFullContext(matched[0].id, matched[0].studentCode);
+    return { success: true, context: ctx };
   },
 
   /**
@@ -1018,66 +1280,79 @@ export const teacherService = {
 
     if (isSupabaseConfigured) {
       try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          const { data: supaStudents, error } = await supabase
-            .from('students')
-            .select('*')
-            .eq('batch_id', batchId);
+        const { data: supaStudents, error } = await supabase
+          .from('students')
+          .select('*')
+          .eq('batch_id', batchId);
 
-          if (!error && supaStudents) {
-            const currentClasses = classesStore[batchId] || [];
-            const studentIds = supaStudents.map((ss: any) => ss.id);
-            let clubMembersByStudent: Record<string, string> = {};
-
-            if (studentIds.length > 0) {
-              const { data: cmData } = await supabase
-                .from('club_members')
-                .select('student_id, clubs(name)')
-                .in('student_id', studentIds);
-
-              if (cmData) {
-                cmData.forEach((cm: any) => {
-                  if (cm.student_id && cm.clubs?.name) {
-                    clubMembersByStudent[cm.student_id] = cm.clubs.name;
-                  }
-                });
-              }
+        if (!error && supaStudents) {
+          let currentClasses = classesStore[batchId] || [];
+          // If classes are not yet populated in local memory, fetch them from Supabase to prevent race conditions
+          if (currentClasses.length === 0) {
+            const { data: supaClasses } = await supabase
+              .from('classes')
+              .select('*')
+              .eq('batch_id', batchId);
+            if (supaClasses && supaClasses.length > 0) {
+              currentClasses = supaClasses.map((c: any) => ({
+                id: c.id,
+                batchId: c.batch_id,
+                name: c.name,
+                teacherName: c.teacher_name || '',
+                studentCount: c.student_count || 0,
+                avgPoints: 0,
+                challengeCompletionRate: 100,
+                studentNames: [],
+                schedule: c.schedule || '',
+                room: c.room || '',
+              }));
+              classesStore[batchId] = currentClasses;
             }
-
-            const mappedStudents: BatchStudent[] = supaStudents.map((ss: any) => {
-              const matchedClass = currentClasses.find((c) => c.id === ss.class_id);
-              const existingLocal = (studentsStore[batchId] || []).find(
-                (s) =>
-                  s.id === ss.id ||
-                  (s.studentCode && ss.student_code && s.studentCode.trim().toLowerCase() === ss.student_code.trim().toLowerCase()) ||
-                  (s.name && ss.full_name && s.name.trim().toLowerCase() === ss.full_name.trim().toLowerCase())
-              );
-
-              const supaClubName = clubMembersByStudent[ss.id];
-
-              const stObj: BatchStudent = {
-                id: ss.id,
-                batchId: ss.batch_id,
-                name: ss.full_name,
-                studentCode: ss.student_code,
-                className: matchedClass ? matchedClass.name : (existingLocal?.className || 'الفصل E'),
-                classId: ss.class_id || undefined,
-                clubName: supaClubName || (existingLocal?.clubName && !isStaleRadioClub(existingLocal.clubName) ? existingLocal.clubName : 'بدون نادي'),
-                levelBadge: '🌱 البداية',
-                points: typeof ss.points === 'number' ? ss.points : (existingLocal?.points ?? 0),
-                completedTasks: existingLocal?.completedTasks || 0,
-                completedChallengesCount: existingLocal?.completedChallengesCount || 0,
-                avatarUrl: ss.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200',
-                status: ss.status || 'active',
-              };
-              stObj.levelBadge = computeDynamicLevelBadge(stObj);
-              return stObj;
-            });
-
-            studentsStore[batchId] = mappedStudents;
-            saveDbToLocalStorage();
           }
+
+          const studentIds = supaStudents.map((ss: any) => ss.id);
+          let clubMembersByStudent: Record<string, string> = {};
+
+          if (studentIds.length > 0) {
+            const { data: cmData } = await supabase
+              .from('club_members')
+              .select('student_id, clubs(name)')
+              .in('student_id', studentIds);
+
+            if (cmData) {
+              cmData.forEach((cm: any) => {
+                if (cm.student_id && cm.clubs?.name) {
+                  clubMembersByStudent[cm.student_id] = cm.clubs.name;
+                }
+              });
+            }
+          }
+
+          const mappedStudents: BatchStudent[] = supaStudents.map((ss: any) => {
+            const matchedClass = currentClasses.find((c) => c.id === ss.class_id);
+            const supaClubName = clubMembersByStudent[ss.id];
+
+            const stObj: BatchStudent = {
+              id: ss.id,
+              batchId: ss.batch_id,
+              name: ss.full_name,
+              studentCode: ss.student_code || '',
+              className: matchedClass ? matchedClass.name : '',
+              classId: ss.class_id || undefined,
+              clubName: supaClubName || 'بدون نادي',
+              levelBadge: '🌱 البداية',
+              points: typeof ss.points === 'number' ? ss.points : 0,
+              completedTasks: 0,
+              completedChallengesCount: 0,
+              avatarUrl: ss.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200',
+              status: ss.status || 'active',
+            };
+            stObj.levelBadge = computeDynamicLevelBadge(stObj);
+            return stObj;
+          });
+
+          studentsStore[batchId] = mappedStudents;
+          saveDbToLocalStorage();
         }
       } catch (err) {
         console.warn('Failed to fetch students from Supabase:', err);
@@ -1129,11 +1404,15 @@ export const teacherService = {
       ? student.studentCode.trim()
       : '';
 
-    const className = student.className || 'الفصل E';
+    const currentClasses = classesStore[batchId] || [];
+    const matchedClass = currentClasses.find(
+      (c) => (student.classId && c.id === student.classId) || (student.className && c.name === student.className)
+    );
+    const className = student.className || (matchedClass ? matchedClass.name : '');
     const existingStudentsInBatch = studentsStore[batchId] || [];
 
     // Check duplicate studentCode in local store within the SAME class
-    if (studentCode) {
+    if (studentCode && className) {
       const duplicateInSameClass = existingStudentsInBatch.find(
         (s) => s.className === className && s.studentCode === studentCode
       );
@@ -1148,6 +1427,7 @@ export const teacherService = {
       batchId,
       studentCode,
       className,
+      classId: matchedClass?.id || student.classId || undefined,
       levelBadge: student.levelBadge || '🌱 البداية',
       points: student.points || 0,
       completedTasks: 0,
@@ -1160,9 +1440,7 @@ export const teacherService = {
       try {
         const { data: { user } } = await supabase.auth.getUser();
         if (user) {
-          const currentClasses = classesStore[batchId] || [];
-          const matchedClass = currentClasses.find((c) => c.name === className);
-          const classId = matchedClass && matchedClass.id.length > 30 ? matchedClass.id : null;
+          const classId = matchedClass && matchedClass.id.length > 30 ? matchedClass.id : (student.classId || null);
 
           // Check duplicate in Supabase within the SAME class if classId is present
           if (classId && studentCode) {
@@ -1405,9 +1683,9 @@ export const teacherService = {
     // Check duplicates inside the imported file per class
     const seenMap = new Set<string>();
     for (const item of newStudentsData) {
-      const clsName = item.className || 'الفصل E';
+      const clsName = item.className || '';
       const code = (item.studentCode || '').trim();
-      if (code) {
+      if (code && clsName) {
         const key = `${clsName}::${code}`;
         if (seenMap.has(key)) {
           throw new Error(`تكرار كود الطالبة (${code}) في نفس الفصل (${clsName}) داخل ملف الإكسل.`);
@@ -1421,7 +1699,7 @@ export const teacherService = {
       const added = await this.addStudent(batchId, {
         name: item.name,
         studentCode: item.studentCode,
-        className: item.className || 'الفصل E',
+        className: item.className || '',
         clubName: item.clubName || 'بدون نادي',
         levelBadge: '🌱 البداية',
         points: item.points || 0,
@@ -2414,7 +2692,7 @@ export const teacherService = {
   async submitForReview(
     submission: Omit<PendingSubmission, 'id' | 'status' | 'submittedAt'>
   ): Promise<PendingSubmission> {
-    const batchId = submission.batchId || 'batch-g6-f';
+    const batchId = submission.batchId || '';
     let newSubId = `sub-${Date.now()}`;
 
     if (isSupabaseConfigured) {
@@ -2466,10 +2744,69 @@ export const teacherService = {
   /**
    * Fetch submissions made by a student
    */
-  async getStudentSubmissions(batchId: string = 'batch-g6-f', studentId?: string): Promise<PendingSubmission[]> {
+  async getStudentSubmissions(batchId: string = '', studentId?: string, studentCode?: string): Promise<PendingSubmission[]> {
+    loadDbFromLocalStorage();
+    if (isSupabaseConfigured && studentId) {
+      try {
+        if (studentCode && studentCode.trim()) {
+          const { data: rpcSubs, error: rpcErr } = await supabase.rpc('get_student_submissions', {
+            p_student_id: studentId,
+            p_student_code: studentCode.trim(),
+          });
+          if (!rpcErr && rpcSubs && Array.isArray(rpcSubs)) {
+            return rpcSubs.map((ss: any) => ({
+              id: ss.id,
+              batchId: ss.batch_id,
+              studentId: ss.student_id,
+              studentCode: studentCode.trim(),
+              studentName: 'طالب',
+              className: '',
+              sourceType: ss.source_type || 'challenge',
+              sourceName: ss.source_name || ss.challenge_title || 'تحدي',
+              contentSummary: ss.submission_content || 'تم تنفيذ التحدي بنجاح',
+              taskTitle: ss.challenge_title || ss.source_name || 'تحدي',
+              submittedAt: ss.submitted_at ? new Date(ss.submitted_at).toLocaleDateString('ar-EG') : 'الآن',
+              status: ss.status || 'pending',
+              rewardXp: ss.reward_xp || 50,
+              teacherNotes: ss.teacher_notes || undefined,
+              challengeId: ss.challenge_id || undefined,
+            }));
+          }
+        }
+
+        const { data: supaSubs } = await supabase
+          .from('challenge_submissions')
+          .select('*, challenges(title, category, reward_xp)')
+          .eq('batch_id', batchId)
+          .eq('student_id', studentId);
+
+        if (supaSubs) {
+          return supaSubs.map((ss: any) => ({
+            id: ss.id,
+            batchId: ss.batch_id,
+            studentId: ss.student_id,
+            studentCode: studentCode || '',
+            studentName: 'طالب',
+            className: '',
+            sourceType: ss.source_type || 'challenge',
+            sourceName: ss.source_name || ss.challenges?.title || 'تحدي',
+            contentSummary: ss.submission_content || 'تم تنفيذ التحدي بنجاح',
+            taskTitle: ss.challenges?.title || ss.source_name || 'تحدي',
+            submittedAt: ss.submitted_at ? new Date(ss.submitted_at).toLocaleDateString('ar-EG') : 'الآن',
+            status: ss.status || 'pending',
+            rewardXp: ss.reward_xp || ss.challenges?.reward_xp || 50,
+            teacherNotes: ss.teacher_notes || undefined,
+            challengeId: ss.challenge_id || undefined,
+          }));
+        }
+      } catch (err) {
+        console.warn('Failed to fetch student submissions from Supabase:', err);
+      }
+    }
+
     const list = submissionsStore[batchId] || [];
     if (!studentId) return list;
-    return list.filter((s) => s.studentId === studentId || s.studentName.includes(studentId));
+    return list.filter((s) => s.studentId === studentId);
   },
 
   /**
@@ -2497,21 +2834,17 @@ export const teacherService = {
     const isValidUUID = (id?: string) =>
       typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 
-    // Find target student
+    const targetStudentId = previousSubmission.studentId;
+
+    // Find target student strictly by UUID
     let student = (studentsStore[batchId] || []).find(
-      (s) =>
-        s.id === previousSubmission.studentId ||
-        (s.studentCode && s.studentCode === previousSubmission.studentCode) ||
-        s.name.trim() === previousSubmission.studentName.trim()
+      (s) => s.id === targetStudentId
     );
 
     if (!student) {
       for (const bId of Object.keys(studentsStore)) {
         const found = (studentsStore[bId] || []).find(
-          (s) =>
-            s.id === previousSubmission.studentId ||
-            (s.studentCode && s.studentCode === previousSubmission.studentCode) ||
-            s.name.trim() === previousSubmission.studentName.trim()
+          (s) => s.id === targetStudentId
         );
         if (found) {
           student = found;
@@ -2563,15 +2896,15 @@ export const teacherService = {
       }
 
       // Award points ONLY IF status is 'approved' AND it was NOT previously approved AND no transaction exists
-      if (status === 'approved' && previousStatus !== 'approved' && !isAlreadyApprovedInDb && !isAlreadyRewardedInDb && student) {
+      if (status === 'approved' && previousStatus !== 'approved' && !isAlreadyApprovedInDb && !isAlreadyRewardedInDb) {
         const rewardXp = previousSubmission.rewardXp || 50;
         if (rewardXp > 0) {
-          if (!isValidUUID(student.id) || !isValidUUID(batchId)) {
-            throw new Error(`معرف الطالب (${student.id}) أو الدفعة (${batchId}) غير صالح كـ UUID في Supabase`);
+          if (!isValidUUID(targetStudentId) || !isValidUUID(batchId)) {
+            throw new Error(`معرف الطالب (${targetStudentId}) أو الدفعة (${batchId}) غير صالح كـ UUID في Supabase`);
           }
 
           const { error: ptError } = await supabase.from('point_transactions').insert({
-            student_id: student.id,
+            student_id: targetStudentId,
             batch_id: batchId,
             teacher_id: user.id,
             points: rewardXp,
@@ -2582,22 +2915,33 @@ export const teacherService = {
           });
 
           if (ptError) {
-            console.error('Supabase reviewSubmission point transaction error:', ptError.message);
-            throw new Error(`فشل منح نقاط التحدي في قاعدة البيانات: ${ptError.message}`);
+            if (ptError.code === '23505' || ptError.message.includes('unique')) {
+              console.warn('Point transaction already exists for this submission (concurrency duplicate ignored)');
+            } else {
+              console.error('Supabase reviewSubmission point transaction error:', ptError.message);
+              throw new Error(`فشل منح نقاط التحدي في قاعدة البيانات: ${ptError.message}`);
+            }
           }
         }
       }
 
       // Fetch authoritative updated student points from Supabase (updated via point_transactions DB trigger)
-      if (student && isValidUUID(student.id)) {
+      if (isValidUUID(targetStudentId)) {
         const { data: updatedDbStudent } = await supabase
           .from('students')
           .select('points')
-          .eq('id', student.id)
+          .eq('id', targetStudentId)
           .maybeSingle();
 
         if (updatedDbStudent && typeof updatedDbStudent.points === 'number') {
-          student.points = updatedDbStudent.points;
+          if (student) {
+            student.points = updatedDbStudent.points;
+          }
+          Object.keys(studentsStore).forEach((bId) => {
+            studentsStore[bId] = (studentsStore[bId] || []).map((s) =>
+              s.id === targetStudentId ? { ...s, points: updatedDbStudent.points } : s
+            );
+          });
         }
       }
     }

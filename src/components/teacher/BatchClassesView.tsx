@@ -44,13 +44,17 @@ export const BatchClassesView: React.FC<BatchClassesViewProps> = ({
 
   // Get real student count for a class
   const getRealStudentCount = (cls: BatchClass) => {
-    const classStudents = students.filter((s) => s.className === cls.name);
-    return classStudents.length > 0 ? classStudents.length : cls.studentCount || 0;
+    const classStudents = students.filter(
+      (s) => (s.classId ? s.classId === cls.id : s.className === cls.name)
+    );
+    return classStudents.length;
   };
 
   // Get student list for a class
   const getStudentsForClass = (cls: BatchClass): BatchStudent[] => {
-    return students.filter((s) => s.className === cls.name);
+    return students.filter(
+      (s) => (s.classId ? s.classId === cls.id : s.className === cls.name)
+    );
   };
 
   // Handle immediate point update

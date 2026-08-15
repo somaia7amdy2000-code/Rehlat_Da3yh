@@ -17,7 +17,7 @@ import { subscribeToSettings, getSystemSettings, SystemSettings } from '../servi
 import { ClubPage } from './ClubPage';
 import { StudentLibraryView } from './StudentLibraryView';
 import { BatchStudent, Batch, BatchClass, BatchClub } from '../types/teacher';
-import { teacherService } from '../services/teacherService';
+import { teacherService, normalizeStudentCode } from '../services/teacherService';
 import { calculateStudentJourney, StudentJourneyMetrics } from '../services/journeyEngine';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 
@@ -372,22 +372,22 @@ export default function YouthMainApp({
   const [ambiguousMatches, setAmbiguousMatches] = useState<Array<BatchStudent & { batchName?: string }> | null>(null);
   const [isLoadingStudent, setIsLoadingStudent] = useState(true);
 
-  // Load available batches when student is not logged in
+  // Load available batches when student is not logged in (using secure portal discovery RPC)
   React.useEffect(() => {
     if (!studentContext) {
-      teacherService.getBatches().then((batches) => {
+      teacherService.getPortalBatches().then((batches) => {
         setAvailableBatches(batches || []);
       });
     }
   }, [studentContext]);
 
-  // Handle batch selection change
+  // Handle batch selection change (using secure portal discovery RPC)
   const handleBatchChange = async (batchId: string) => {
     setSelectedBatchId(batchId);
     setSelectedClassId('');
     setAvailableClasses([]);
     if (batchId) {
-      const classes = await teacherService.getClassesByBatch(batchId);
+      const classes = await teacherService.getPortalClasses(batchId);
       setAvailableClasses(classes || []);
     }
   };
@@ -433,75 +433,19 @@ export default function YouthMainApp({
       return;
     }
 
-    // Extract numeric code in case composite code format (e.g., 5-D or 5-A+) is entered
-    const numericCode = codeClean.includes('-') ? codeClean.split('-')[0].trim() : codeClean;
+    const res = await teacherService.studentPortalLogin({
+      batchId: selectedBatchId,
+      classId: selectedClassId,
+      studentCode: codeClean,
+      studentName: nameClean,
+    });
 
-    const batchClasses = await teacherService.getClassesByBatch(selectedBatchId);
-    const batchStudents = await teacherService.getStudentsByBatch(selectedBatchId);
-    const targetClass = batchClasses.find((c) => c.id === selectedClassId);
-
-    const inputTokens = normalizeArabic(nameClean).split(' ').filter(Boolean);
-    const numTokens = Math.min(3, Math.max(1, inputTokens.length));
-    const normalizedInput = inputTokens.slice(0, numTokens).join(' ');
-
-    let matchingStudentIds: string[] = [];
-
-    // Query Supabase directly if configured for precision by batch_id, class_id, student_code
-    if (isSupabaseConfigured) {
-      try {
-        const { data: supaStudents, error } = await supabase
-          .from('students')
-          .select('id, full_name, student_code, class_id, batch_id')
-          .eq('batch_id', selectedBatchId)
-          .eq('class_id', selectedClassId)
-          .in('student_code', [codeClean, numericCode]);
-
-        if (!error && supaStudents && supaStudents.length > 0) {
-          supaStudents.forEach((ss: any) => {
-            const stNameTokens = getFirstNTokens(ss.full_name, numTokens);
-            if (stNameTokens === normalizedInput) {
-              matchingStudentIds.push(ss.id);
-            }
-          });
-        }
-      } catch (err) {
-        console.warn('Supabase login lookup warning:', err);
-      }
-    }
-
-    // Fallback to local store
-    if (matchingStudentIds.length === 0) {
-      const matches = batchStudents.filter((st) => {
-        if (st.batchId !== selectedBatchId) return false;
-
-        const matchesClass = (st as any).class_id
-          ? (st as any).class_id === selectedClassId
-          : targetClass && st.className === targetClass.name;
-
-        if (!matchesClass) return false;
-
-        const stCodeClean = (st.studentCode || '').trim();
-        const stCodeNumeric = stCodeClean.includes('-') ? stCodeClean.split('-')[0].trim() : stCodeClean;
-
-        const matchesCode =
-          stCodeClean.toLowerCase() === codeClean.toLowerCase() ||
-          stCodeNumeric.toLowerCase() === numericCode.toLowerCase();
-
-        if (!matchesCode) return false;
-
-        const stNameTokens = getFirstNTokens(st.name, numTokens);
-        return stNameTokens === normalizedInput;
-      });
-
-      matchingStudentIds = matches.map((m) => m.id);
-    }
-
-    if (matchingStudentIds.length === 0) {
-      setLoginError('بيانات الطالب غير صحيحة، تأكد من الدفعة، الفصل، الاسم والكود.');
-    } else if (matchingStudentIds.length === 1) {
-      await handleSelectSpecificStudent(matchingStudentIds[0]);
+    if (res.success && res.context) {
+      setActiveStudentCode(res.context.student.id);
+      setStudentContext(res.context);
+      setLoginError(null);
     } else {
-      setLoginError('توجد بيانات مكررة لهذا الطالب في هذا الفصل. يرجى التواصل مع المعلم لتصحيح البيانات.');
+      setLoginError(res.error || 'بيانات الطالب غير صحيحة، تأكد من الدفعة، الفصل، الاسم والكود.');
     }
   };
 
@@ -516,13 +460,35 @@ export default function YouthMainApp({
   // Fetch student context and system settings
   const refreshStudentContext = React.useCallback(async () => {
     setIsLoadingStudent(true);
-    const allStds = await teacherService.getAllStudentsAcrossBatches();
-    setAllStudentsList(allStds);
 
     let codeToUse = activeStudentCode;
+    let studentCodeParam: string | undefined = undefined;
+
+    try {
+      const stored = localStorage.getItem('rihlat_logged_student_code_v1');
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored);
+          if (parsed && typeof parsed === 'object') {
+            if (!codeToUse && (parsed.studentId || parsed.studentCode)) {
+              codeToUse = parsed.studentId || parsed.studentCode;
+            }
+            if (parsed.studentCode) {
+              studentCodeParam = parsed.studentCode;
+            }
+          } else if (!codeToUse && typeof stored === 'string') {
+            codeToUse = stored;
+          }
+        } catch {
+          if (!codeToUse) codeToUse = stored;
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
 
     if (codeToUse) {
-      const ctx = await teacherService.getStudentFullContext(codeToUse);
+      const ctx = await teacherService.getStudentFullContext(codeToUse, studentCodeParam);
       if (ctx) {
         setStudentContext(ctx);
         setLoginError(null);
@@ -2183,9 +2149,9 @@ export default function YouthMainApp({
             transition={{ duration: 0.25 }}
           >
             <StudentLibraryView
-              studentBatchId={studentContext?.batch?.id || 'batch-g6-f'}
-              studentBatchName={studentContext?.batch?.name || 'G6 Girls (الصف السادس - إناث 📚)'}
-              studentClubName={studentContext?.student?.clubName || '🎙️ نادي الإعلام والبودكاست'}
+              studentBatchId={studentContext?.batch?.id}
+              studentBatchName={studentContext?.batch?.name}
+              studentClubName={studentContext?.student?.clubName}
               studentId={studentContext?.student?.id}
               studentCode={studentContext?.student?.studentCode}
               studentName={studentContext?.student?.name}

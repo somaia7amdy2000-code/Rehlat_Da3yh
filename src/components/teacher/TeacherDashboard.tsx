@@ -115,10 +115,14 @@ export const TeacherDashboard: React.FC<{ onLogout?: () => void }> = ({ onLogout
   }, [selectedBatch]);
 
   const loadBatchData = async (batchId: string) => {
+    // 1. Load classes first to populate classes mapping
+    const batchClasses = await teacherService.getClassesByBatch(batchId);
+    setClasses(batchClasses);
+
+    // 2. Load students and all other batch data
     const [
       batchStats,
       batchStudents,
-      batchClasses,
       batchClubs,
       batchChallenges,
       batchLibrary,
@@ -127,7 +131,6 @@ export const TeacherDashboard: React.FC<{ onLogout?: () => void }> = ({ onLogout
     ] = await Promise.all([
       teacherService.getBatchStats(batchId),
       teacherService.getStudentsByBatch(batchId),
-      teacherService.getClassesByBatch(batchId),
       teacherService.getClubsByBatch(batchId),
       teacherService.getChallengesByBatch(batchId),
       teacherService.getLibraryByBatch(batchId),
@@ -137,7 +140,6 @@ export const TeacherDashboard: React.FC<{ onLogout?: () => void }> = ({ onLogout
 
     setStats(batchStats);
     setStudents(batchStudents);
-    setClasses(batchClasses);
     setClubs(batchClubs);
     setChallenges(batchChallenges);
     setLibrary(batchLibrary);

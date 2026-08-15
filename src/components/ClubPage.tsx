@@ -190,12 +190,12 @@ export const ClubPage: React.FC<ClubPageProps> = ({
               avatarUrl: s.avatarUrl,
             }));
 
-          const batchId = batch?.id || 'batch-g6-f';
+          const batchId = batch?.id || '';
           let clubChallenges = (studentChallenges || []).filter(
             (ch) => ch.targetType === 'club' && ch.targetName && ch.targetName.trim().toLowerCase() === currentClub.name.trim().toLowerCase()
           );
 
-          if (clubChallenges.length === 0) {
+          if (clubChallenges.length === 0 && batchId) {
             const allBatchChallenges = await teacherService.getChallengesByBatch(batchId);
             clubChallenges = allBatchChallenges.filter(
               (ch) => ch.targetType === 'club' && ch.targetName && ch.targetName.trim().toLowerCase() === currentClub.name.trim().toLowerCase()
@@ -269,12 +269,12 @@ export const ClubPage: React.FC<ClubPageProps> = ({
     if (!proofSubmissionModal) return;
     const { task, notes } = proofSubmissionModal;
     try {
-      const batchId = batch?.id || 'batch-g6-f';
+      const batchId = batch?.id || '';
       await teacherService.submitForReview({
         batchId,
         batchName: batch?.name || 'الدفعة العامة',
-        studentId: studentId || 'std-1',
-        studentName: studentName || 'مريم',
+        studentId: studentId || '',
+        studentName: studentName || 'طالب',
         studentCode: studentCode || '',
         className: className || '',
         clubName: currentClub?.name || 'نادي',
