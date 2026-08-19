@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import * as XLSX from 'xlsx';
 import {
   X,
   User,
@@ -72,10 +73,16 @@ export const AddStudentModal: React.FC<AddStudentModalProps> = ({
     Array<{ name: string; studentCode: string; className: string; clubName: string; points: number }>
   >([]);
 
-  // Sync state on open
-  React.useEffect(() => {
-    if (isOpen) {
+  const wasOpenRef = useRef(false);
+
+  // Sync state ONLY when modal transitions from closed to open
+  useEffect(() => {
+    if (isOpen && !wasOpenRef.current) {
       setImportMethod(initialMode);
+      setFileName(null);
+      setName('');
+      setStudentCode('');
+
       const defaultClass1 = classesList[0] || 'الفصل E';
       const defaultClass2 = classesList[1] || defaultClass1;
       const defaultClass3 = classesList[2] || defaultClass2;
@@ -86,14 +93,13 @@ export const AddStudentModal: React.FC<AddStudentModalProps> = ({
         { name: 'ندى عبد الرحمن القحطاني', studentCode: '1', className: defaultClass2, clubName: 'بدون نادي', points: 0 },
         { name: 'أبرار محمد العتيبي', studentCode: '1', className: defaultClass3, clubName: 'بدون نادي', points: 0 },
       ]);
-    }
-  }, [isOpen, classesList, initialMode]);
 
-  React.useEffect(() => {
-    if (classesList.length > 0 && (!className || !classesList.includes(className))) {
-      setClassName(classesList[0]);
+      if (classesList.length > 0 && (!className || !classesList.includes(className))) {
+        setClassName(classesList[0]);
+      }
     }
-  }, [classesList]);
+    wasOpenRef.current = isOpen;
+  }, [isOpen, initialMode]);
 
   if (!isOpen) return null;
 
@@ -137,34 +143,76 @@ export const AddStudentModal: React.FC<AddStudentModalProps> = ({
     onClose();
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
       setFileName(file.name);
 
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const text = event.target?.result as string;
-        if (text) {
-          const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
-          if (lines.length > 1) {
-            const parsed = lines.slice(1).map((line, idx) => {
-              const cols = line.split(/[,;\t]/).map((c) => c.replace(/^["']|["']$/g, '').trim());
+      try {
+        const buffer = await file.arrayBuffer();
+        const workbook = XLSX.read(buffer, { type: 'array' });
+        const firstSheetName = workbook.SheetNames[0];
+        if (!firstSheetName) return;
+
+        const worksheet = workbook.Sheets[firstSheetName];
+        const rawData: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
+
+        if (rawData && rawData.length > 0) {
+          // Find header row or column mapping
+          const firstRow = rawData[0].map((cell: any) => String(cell || '').trim().toLowerCase());
+
+          let nameIdx = -1;
+          let codeIdx = -1;
+          let classIdx = -1;
+          let clubIdx = -1;
+          let pointsIdx = -1;
+
+          firstRow.forEach((col: string, idx: number) => {
+            if (col.includes('اسم') || col.includes('name') || col.includes('طالب')) nameIdx = idx;
+            else if (col.includes('كود') || col.includes('رقم') || col.includes('code') || col.includes('id')) codeIdx = idx;
+            else if (col.includes('فصل') || col.includes('class') || col.includes('صف')) classIdx = idx;
+            else if (col.includes('نادي') || col.includes('club')) clubIdx = idx;
+            else if (col.includes('نقط') || col.includes('نقاط') || col.includes('point') || col.includes('xp')) pointsIdx = idx;
+          });
+
+          const hasHeaderWords = firstRow.some((c: string) =>
+            c.includes('اسم') || c.includes('name') || c.includes('طالب') || c.includes('فصل') || c.includes('كود')
+          );
+
+          if (nameIdx === -1) nameIdx = 0;
+          if (codeIdx === -1) codeIdx = 1;
+          if (classIdx === -1) classIdx = 2;
+          if (clubIdx === -1) clubIdx = 3;
+          if (pointsIdx === -1) pointsIdx = 4;
+
+          const dataRows = hasHeaderWords ? rawData.slice(1) : rawData;
+          const defaultFallbackClass = classesList[0] || 'الفصل E';
+
+          const parsed = dataRows
+            .filter((row: any[]) => row && row.some((cell: any) => String(cell || '').trim().length > 0))
+            .map((row: any[], idx: number) => {
+              const rawName = String(row[nameIdx] ?? '').trim();
+              const rawCode = String(row[codeIdx] ?? '').trim();
+              const rawClass = String(row[classIdx] ?? '').trim();
+              const rawClub = String(row[clubIdx] ?? '').trim();
+              const rawPoints = Number(row[pointsIdx]) || 0;
+
               return {
-                name: cols[0] || `طالب جديد ${idx + 1}`,
-                studentCode: cols[1] || `${idx + 1}`,
-                className: cols[2] || classesList[0] || 'الفصل E',
-                clubName: cols[3] || 'بدون نادي',
-                points: Number(cols[4]) || 0,
+                name: rawName || `طالب ${idx + 1}`,
+                studentCode: rawCode || `${idx + 1}`,
+                className: rawClass || defaultFallbackClass,
+                clubName: rawClub || 'بدون نادي',
+                points: rawPoints,
               };
             });
-            if (parsed.length > 0) {
-              setPreviewRows(parsed);
-            }
+
+          if (parsed.length > 0) {
+            setPreviewRows(parsed);
           }
         }
-      };
-      reader.readAsText(file);
+      } catch (err) {
+        console.error('Error reading excel/csv file:', err);
+      }
     }
   };
 
@@ -499,8 +547,10 @@ export const CreateChallengeModal: React.FC<CreateChallengeModalProps> = ({
     );
   }, [clubsList]);
 
+  const wasOpenRef = useRef(false);
+
   React.useEffect(() => {
-    if (isOpen) {
+    if (isOpen && !wasOpenRef.current) {
       setErrorMessage(null);
       if (initialTargetType) {
         setTargetType(initialTargetType);
@@ -514,7 +564,8 @@ export const CreateChallengeModal: React.FC<CreateChallengeModalProps> = ({
         }
       }
     }
-  }, [isOpen, initialTargetType, initialTargetName, normalizedClubs]);
+    wasOpenRef.current = isOpen;
+  }, [isOpen, initialTargetType, initialTargetName]);
 
   if (!isOpen) return null;
 
@@ -877,25 +928,28 @@ export const AddAnnouncementModal: React.FC<AddAnnouncementModalProps> = ({
   const [selectedBatchId, setSelectedBatchId] = useState(currentBatchId || '');
   const [selectedClubName, setSelectedClubName] = useState('');
 
-  // Auto-select defaults when modal opens or lists change
+  const wasOpenRef = useRef(false);
+
+  // Auto-select defaults when modal transitions to open
   useEffect(() => {
-    if (isOpen) {
-      if (studentsList.length > 0 && !selectedStudentId) {
+    if (isOpen && !wasOpenRef.current) {
+      if (studentsList.length > 0) {
         setSelectedStudentId(studentsList[0].id);
       }
-      if (classesList.length > 0 && !selectedClassName) {
+      if (classesList.length > 0) {
         setSelectedClassName(classesList[0]);
       }
       if (currentBatchId) {
         setSelectedBatchId(currentBatchId);
-      } else if (batchesList.length > 0 && !selectedBatchId) {
+      } else if (batchesList.length > 0) {
         setSelectedBatchId(batchesList[0].id);
       }
-      if (clubsList.length > 0 && !selectedClubName) {
+      if (clubsList.length > 0) {
         setSelectedClubName(clubsList[0]);
       }
     }
-  }, [isOpen, studentsList, classesList, batchesList, clubsList, currentBatchId]);
+    wasOpenRef.current = isOpen;
+  }, [isOpen, currentBatchId]);
 
   if (!isOpen) return null;
 
@@ -1217,19 +1271,22 @@ export const CreateClubModal: React.FC<CreateClubModalProps> = ({
   const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
   const [activeClassName, setActiveClassName] = useState<string>('');
 
+  const wasOpenRef = useRef(false);
+
   useEffect(() => {
-    if (isOpen) {
-      if (classes.length > 0 && !activeClassName) {
+    if (isOpen && !wasOpenRef.current) {
+      if (classes.length > 0) {
         setActiveClassName(classes[0].name);
       }
-    } else {
+    } else if (!isOpen && wasOpenRef.current) {
       setName('');
       setSupervisorName('أ. مشرف النادي');
       setCategory('أنشطة ثقافية وإعلامية');
       setSelectedStudentIds([]);
       setActiveClassName('');
     }
-  }, [isOpen, classes]);
+    wasOpenRef.current = isOpen;
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -1550,6 +1607,7 @@ interface UploadLibraryModalProps {
     thumbnailUrl: string;
     category: string;
     targetType: 'all' | 'batch' | 'club' | 'student';
+    targetId?: string;
     targetName?: string;
     targetStudentId?: string;
     targetStudentCode?: string;
@@ -1558,7 +1616,7 @@ interface UploadLibraryModalProps {
   }) => void;
   currentBatchName?: string;
   batchesList?: Array<{ id: string; name: string }>;
-  clubsList?: string[];
+  clubsList?: Array<{ id: string; name: string } | string>;
   studentsList?: Array<{ id: string; name: string; studentCode?: string; className?: string }>;
 }
 
@@ -1566,7 +1624,7 @@ export const UploadLibraryModal: React.FC<UploadLibraryModalProps> = ({
   isOpen,
   onClose,
   onSubmit,
-  currentBatchName = 'G6 Girls (الصف السادس - إناث 📚)',
+  currentBatchName = 'الدفعة الحالية',
   batchesList = [],
   clubsList = [],
   studentsList = [],
@@ -1578,27 +1636,35 @@ export const UploadLibraryModal: React.FC<UploadLibraryModalProps> = ({
   const [thumbnailUrl, setThumbnailUrl] = useState('');
   const [category, setCategory] = useState('أدلة وتفاسير');
   const [targetType, setTargetType] = useState<'all' | 'batch' | 'club' | 'student'>('all');
+  const [selectedBatchId, setSelectedBatchId] = useState(batchesList[0]?.id || '');
   const [selectedBatchName, setSelectedBatchName] = useState(currentBatchName);
-  const [selectedClub, setSelectedClub] = useState(clubsList[0] || '');
+  
+  const getClubName = (c: { id: string; name: string } | string) => typeof c === 'string' ? c : c.name;
+  const getClubId = (c: { id: string; name: string } | string) => typeof c === 'string' ? c : c.id;
+
+  const [selectedClubId, setSelectedClubId] = useState(clubsList[0] ? getClubId(clubsList[0]) : '');
   const [selectedStudentId, setSelectedStudentId] = useState(studentsList[0]?.id || '');
   const [fileSize, setFileSize] = useState('3.5 MB');
   const [duration, setDuration] = useState('10:00 دقيقة');
 
-  React.useEffect(() => {
-    if (currentBatchName) setSelectedBatchName(currentBatchName);
-  }, [currentBatchName]);
+  const wasOpenRef = useRef(false);
 
   React.useEffect(() => {
-    if (clubsList.length > 0 && (!selectedClub || !clubsList.includes(selectedClub))) {
-      setSelectedClub(clubsList[0]);
+    if (isOpen && !wasOpenRef.current) {
+      if (currentBatchName) setSelectedBatchName(currentBatchName);
+      if (batchesList.length > 0) {
+        setSelectedBatchId(batchesList[0].id);
+        setSelectedBatchName(batchesList[0].name);
+      }
+      if (clubsList.length > 0) {
+        setSelectedClubId(getClubId(clubsList[0]));
+      }
+      if (studentsList.length > 0) {
+        setSelectedStudentId(studentsList[0].id);
+      }
     }
-  }, [clubsList]);
-
-  React.useEffect(() => {
-    if (studentsList.length > 0 && (!selectedStudentId || !studentsList.some((s) => s.id === selectedStudentId))) {
-      setSelectedStudentId(studentsList[0].id);
-    }
-  }, [studentsList]);
+    wasOpenRef.current = isOpen;
+  }, [isOpen, currentBatchName]);
 
   if (!isOpen) return null;
 
@@ -1607,17 +1673,23 @@ export const UploadLibraryModal: React.FC<UploadLibraryModalProps> = ({
     if (!title.trim()) return;
 
     let targetName = 'الجميع';
+    let targetId: string | undefined = undefined;
     let targetStudentId: string | undefined = undefined;
     let targetStudentCode: string | undefined = undefined;
 
     if (targetType === 'batch') {
-      targetName = selectedBatchName || currentBatchName;
+      const matchBatch = batchesList.find((b) => b.id === selectedBatchId || b.name === selectedBatchName);
+      targetName = matchBatch ? matchBatch.name : (selectedBatchName || currentBatchName);
+      targetId = matchBatch ? matchBatch.id : selectedBatchId;
     } else if (targetType === 'club') {
-      targetName = selectedClub || 'نادي عام';
+      const matchClub = clubsList.find((c) => getClubId(c) === selectedClubId || getClubName(c) === selectedClubId);
+      targetName = matchClub ? getClubName(matchClub) : 'نادي محدد';
+      targetId = matchClub ? getClubId(matchClub) : selectedClubId;
     } else if (targetType === 'student') {
       const st = studentsList.find((s) => s.id === selectedStudentId) || studentsList[0];
       if (st) {
         targetName = st.name;
+        targetId = st.id;
         targetStudentId = st.id;
         targetStudentCode = st.studentCode;
       } else {
@@ -1633,6 +1705,7 @@ export const UploadLibraryModal: React.FC<UploadLibraryModalProps> = ({
       thumbnailUrl,
       category,
       targetType,
+      targetId,
       targetName,
       targetStudentId,
       targetStudentCode,
@@ -1786,12 +1859,16 @@ export const UploadLibraryModal: React.FC<UploadLibraryModalProps> = ({
                   <label className="block text-slate-700 mb-1">اختر الدفعة المستهدفة:</label>
                   {batchesList.length > 0 ? (
                     <select
-                      value={selectedBatchName}
-                      onChange={(e) => setSelectedBatchName(e.target.value)}
+                      value={selectedBatchId}
+                      onChange={(e) => {
+                        setSelectedBatchId(e.target.value);
+                        const b = batchesList.find((x) => x.id === e.target.value);
+                        if (b) setSelectedBatchName(b.name);
+                      }}
                       className="w-full p-2.5 bg-white border border-teal-300 rounded-xl font-bold text-slate-900 focus:outline-none"
                     >
                       {batchesList.map((b) => (
-                        <option key={b.id} value={b.name}>
+                        <option key={b.id} value={b.id}>
                           {b.name}
                         </option>
                       ))}
@@ -1809,15 +1886,19 @@ export const UploadLibraryModal: React.FC<UploadLibraryModalProps> = ({
                   <label className="block text-slate-700 mb-1">اختر النادي المستهدف:</label>
                   {clubsList.length > 0 ? (
                     <select
-                      value={selectedClub}
-                      onChange={(e) => setSelectedClub(e.target.value)}
+                      value={selectedClubId}
+                      onChange={(e) => setSelectedClubId(e.target.value)}
                       className="w-full p-2.5 bg-white border border-teal-300 rounded-xl font-bold text-slate-900 focus:outline-none"
                     >
-                      {clubsList.map((c) => (
-                        <option key={c} value={c}>
-                          {c}
-                        </option>
-                      ))}
+                      {clubsList.map((c) => {
+                        const cid = getClubId(c);
+                        const cname = getClubName(c);
+                        return (
+                          <option key={cid} value={cid}>
+                            {cname}
+                          </option>
+                        );
+                      })}
                     </select>
                   ) : (
                     <div className="text-[11px] text-amber-800 font-bold bg-white p-2 rounded-xl border border-amber-200">
@@ -2070,7 +2151,7 @@ export const EditStudentModal: React.FC<EditStudentModalProps> = ({
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   React.useEffect(() => {
-    if (student) {
+    if (isOpen && student) {
       setName(student.name || '');
       setClassName(student.className || '');
       setClubName(student.clubName || 'بدون نادي');
@@ -2080,7 +2161,7 @@ export const EditStudentModal: React.FC<EditStudentModalProps> = ({
       setShowMoveModal(false);
       setShowDeleteConfirm(false);
     }
-  }, [student]);
+  }, [isOpen, student?.id]);
 
   if (!isOpen || !student) return null;
 
@@ -2570,7 +2651,7 @@ export const EditBatchModal: React.FC<EditBatchModalProps> = ({ isOpen, batch, o
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   React.useEffect(() => {
-    if (batch) {
+    if (isOpen && batch) {
       setName(batch.name || '');
       setStage(batch.stage || 'المرحلة الابتدائية العليا');
       setGender(batch.gender || 'female');
@@ -2578,7 +2659,7 @@ export const EditBatchModal: React.FC<EditBatchModalProps> = ({ isOpen, batch, o
       setDescription(batch.description || '');
       setShowDeleteConfirm(false);
     }
-  }, [batch]);
+  }, [isOpen, batch?.id]);
 
   if (!isOpen || !batch) return null;
 
@@ -2889,14 +2970,14 @@ export const EditClassModal: React.FC<EditClassModalProps> = ({
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   React.useEffect(() => {
-    if (batchClass) {
+    if (isOpen && batchClass) {
       setName(batchClass.name || '');
       setTeacherName(batchClass.teacherName || '');
       setSchedule(batchClass.schedule || '');
       setRoom(batchClass.room || '');
       setShowDeleteConfirm(false);
     }
-  }, [batchClass]);
+  }, [isOpen, batchClass?.id]);
 
   if (!isOpen || !batchClass) return null;
 
@@ -3069,13 +3150,13 @@ export const EditClubModal: React.FC<EditClubModalProps> = ({ isOpen, club, onCl
   const [category, setCategory] = useState(club?.category || '');
 
   React.useEffect(() => {
-    if (club) {
+    if (isOpen && club) {
       setName(club.name || '');
       setDescription(club.description || '');
       setSupervisorName(club.supervisorName || '');
       setCategory(club.category || '');
     }
-  }, [club]);
+  }, [isOpen, club?.id]);
 
   if (!isOpen || !club) return null;
 
@@ -3568,7 +3649,9 @@ interface EditLibraryModalProps {
   onSubmit: (itemId: string, updates: Partial<BatchLibraryItem>) => void;
   onDelete?: (itemId: string) => void;
   currentBatchName?: string;
-  clubsList?: string[];
+  batchesList?: Array<{ id: string; name: string }>;
+  clubsList?: Array<{ id: string; name: string } | string>;
+  studentsList?: Array<{ id: string; name: string; studentCode?: string; className?: string }>;
 }
 
 export const EditLibraryModal: React.FC<EditLibraryModalProps> = ({
@@ -3578,37 +3661,49 @@ export const EditLibraryModal: React.FC<EditLibraryModalProps> = ({
   onSubmit,
   onDelete,
   currentBatchName = 'الدفعة الحالية',
+  batchesList = [],
   clubsList = [],
+  studentsList = [],
 }) => {
   const [title, setTitle] = useState(item?.title || '');
   const [description, setDescription] = useState(item?.description || '');
-  const [fileType, setFileType] = useState<'pdf' | 'video' | 'audio' | 'image' | 'link' | 'doc'>(item?.fileType || 'pdf');
+  const [fileType, setFileType] = useState<'pdf' | 'video' | 'audio' | 'image' | 'link' | 'doc'>(item?.fileType || item?.type || 'pdf');
   const [url, setUrl] = useState(item?.url || '');
   const [thumbnailUrl, setThumbnailUrl] = useState(item?.thumbnailUrl || '');
   const [category, setCategory] = useState(item?.category || 'عام');
-  const [targetType, setTargetType] = useState<'all' | 'batch' | 'club'>(item?.targetType || 'all');
-  const [selectedClub, setSelectedClub] = useState(clubsList[0] || '');
+  const [targetType, setTargetType] = useState<'all' | 'batch' | 'club' | 'student'>((item?.targetType as any) || 'all');
+  
+  const getClubName = (c: { id: string; name: string } | string) => typeof c === 'string' ? c : c.name;
+  const getClubId = (c: { id: string; name: string } | string) => typeof c === 'string' ? c : c.id;
+
+  const [selectedBatchId, setSelectedBatchId] = useState(item?.batchId || batchesList[0]?.id || '');
+  const [selectedBatchName, setSelectedBatchName] = useState(currentBatchName);
+  const [selectedClubId, setSelectedClubId] = useState(item?.targetId || (clubsList[0] ? getClubId(clubsList[0]) : ''));
+  const [selectedStudentId, setSelectedStudentId] = useState(item?.targetStudentId || item?.targetId || studentsList[0]?.id || '');
   const [fileSize, setFileSize] = useState(item?.fileSize || '3.5 MB');
   const [duration, setDuration] = useState(item?.duration || '10:00 دقيقة');
 
   React.useEffect(() => {
-    if (item) {
+    if (isOpen && item) {
       setTitle(item.title || '');
       setDescription(item.description || '');
-      setFileType(item.fileType || 'pdf');
+      setFileType(item.fileType || item.type || 'pdf');
       setUrl(item.url || '');
       setThumbnailUrl(item.thumbnailUrl || '');
       setCategory(item.category || 'عام');
-      setTargetType(item.targetType || 'all');
-      if (item.targetType === 'club' && item.targetName) {
-        setSelectedClub(item.targetName || '');
-      } else {
-        setSelectedClub(clubsList[0] || '');
+      setTargetType((item.targetType as any) || 'all');
+      setSelectedBatchId(item.batchId || batchesList[0]?.id || '');
+      setSelectedBatchName(currentBatchName);
+      if (item.targetType === 'club') {
+        setSelectedClubId(item.targetId || (clubsList[0] ? getClubId(clubsList[0]) : ''));
+      }
+      if (item.targetType === 'student') {
+        setSelectedStudentId(item.targetStudentId || item.targetId || studentsList[0]?.id || '');
       }
       setFileSize(item.fileSize || '3.5 MB');
       setDuration(item.duration || '10:00 دقيقة');
     }
-  }, [item, clubsList]);
+  }, [isOpen, item?.id]);
 
   if (!isOpen || !item) return null;
 
@@ -3617,18 +3712,43 @@ export const EditLibraryModal: React.FC<EditLibraryModalProps> = ({
     if (!title.trim()) return;
 
     let targetName = 'الجميع';
-    if (targetType === 'batch') targetName = currentBatchName;
-    if (targetType === 'club') targetName = selectedClub;
+    let targetId: string | undefined = undefined;
+    let targetStudentId: string | undefined = undefined;
+    let targetStudentCode: string | undefined = undefined;
+
+    if (targetType === 'batch') {
+      const matchBatch = batchesList.find((b) => b.id === selectedBatchId || b.name === selectedBatchName);
+      targetName = matchBatch ? matchBatch.name : (selectedBatchName || currentBatchName);
+      targetId = matchBatch ? matchBatch.id : selectedBatchId;
+    } else if (targetType === 'club') {
+      const matchClub = clubsList.find((c) => getClubId(c) === selectedClubId || getClubName(c) === selectedClubId);
+      targetName = matchClub ? getClubName(matchClub) : 'نادي محدد';
+      targetId = matchClub ? getClubId(matchClub) : selectedClubId;
+    } else if (targetType === 'student') {
+      const st = studentsList.find((s) => s.id === selectedStudentId) || studentsList[0];
+      if (st) {
+        targetName = st.name;
+        targetId = st.id;
+        targetStudentId = st.id;
+        targetStudentCode = st.studentCode;
+      } else {
+        targetName = 'طالب محدد';
+      }
+    }
 
     onSubmit(item.id, {
       title,
       description,
       fileType,
+      type: fileType,
       url,
       thumbnailUrl,
       category,
       targetType,
+      targetId,
       targetName,
+      targetStudentId,
+      targetStudentCode,
       fileSize: fileType === 'pdf' || fileType === 'image' || fileType === 'doc' ? fileSize : undefined,
       duration: fileType === 'video' || fileType === 'audio' ? duration : undefined,
     });
@@ -3700,6 +3820,7 @@ export const EditLibraryModal: React.FC<EditLibraryModalProps> = ({
                   <option value="audio">🎧 تسجيل صوتي / تلاوة</option>
                   <option value="image">🖼️ صورة / إنفوجرافيك</option>
                   <option value="link">🔗 رابط موقع / منصة خارجية</option>
+                  <option value="doc">📝 مستند وورد / نصي</option>
                 </select>
               </div>
 
@@ -3715,10 +3836,10 @@ export const EditLibraryModal: React.FC<EditLibraryModalProps> = ({
               </div>
             </div>
 
-            {/* Target Audience Selector (الجميع - الدفعة - النادي) */}
+            {/* Target Audience Selector */}
             <div className="p-3 bg-teal-50/70 border border-teal-200/80 rounded-2xl space-y-2">
               <label className="block text-teal-900 font-black text-xs">تحديد الفئة المستهدفة لرؤية هذا المورد:</label>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 <button
                   type="button"
                   onClick={() => setTargetType('all')}
@@ -3754,28 +3875,94 @@ export const EditLibraryModal: React.FC<EditLibraryModalProps> = ({
                 >
                   🎙️ نادي محدد
                 </button>
+
+                <button
+                  type="button"
+                  onClick={() => setTargetType('student')}
+                  className={`p-2.5 rounded-xl border text-center transition-all ${
+                    targetType === 'student'
+                      ? 'bg-teal-600 text-white font-black shadow-sm'
+                      : 'bg-white text-slate-700 hover:bg-slate-50 font-bold'
+                  }`}
+                >
+                  👤 طالب محدد
+                </button>
               </div>
 
               {targetType === 'batch' && (
-                <div className="mt-2 text-[11px] text-teal-800 font-bold bg-white p-2 rounded-xl border border-teal-200">
-                  الدفعة المستهدفة: <span className="font-black text-slate-900">{currentBatchName}</span>
+                <div className="mt-2">
+                  <label className="block text-slate-700 mb-1">اختر الدفعة المستهدفة:</label>
+                  {batchesList.length > 0 ? (
+                    <select
+                      value={selectedBatchId}
+                      onChange={(e) => {
+                        setSelectedBatchId(e.target.value);
+                        const b = batchesList.find((x) => x.id === e.target.value);
+                        if (b) setSelectedBatchName(b.name);
+                      }}
+                      className="w-full p-2.5 bg-white border border-teal-300 rounded-xl font-bold text-slate-900 focus:outline-none"
+                    >
+                      {batchesList.map((b) => (
+                        <option key={b.id} value={b.id}>
+                          {b.name}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div className="text-[11px] text-teal-800 font-bold bg-white p-2 rounded-xl border border-teal-200">
+                      الدفعة المستهدفة: <span className="font-black text-slate-900">{currentBatchName}</span>
+                    </div>
+                  )}
                 </div>
               )}
 
               {targetType === 'club' && (
                 <div className="mt-2">
                   <label className="block text-slate-700 mb-1">اختر النادي المستهدف:</label>
-                  <select
-                    value={selectedClub}
-                    onChange={(e) => setSelectedClub(e.target.value)}
-                    className="w-full p-2.5 bg-white border border-teal-300 rounded-xl font-bold text-slate-900 focus:outline-none"
-                  >
-                    {clubsList.map((c) => (
-                      <option key={c} value={c}>
-                        {c}
-                      </option>
-                    ))}
-                  </select>
+                  {clubsList.length > 0 ? (
+                    <select
+                      value={selectedClubId}
+                      onChange={(e) => setSelectedClubId(e.target.value)}
+                      className="w-full p-2.5 bg-white border border-teal-300 rounded-xl font-bold text-slate-900 focus:outline-none"
+                    >
+                      {clubsList.map((c) => {
+                        const cid = getClubId(c);
+                        const cname = getClubName(c);
+                        return (
+                          <option key={cid} value={cid}>
+                            {cname}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  ) : (
+                    <div className="text-[11px] text-amber-800 font-bold bg-white p-2 rounded-xl border border-amber-200">
+                      لا توجد أندية مخصصة بالدفعة حالياً، سيتم استهداف الأندية العامة.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {targetType === 'student' && (
+                <div className="mt-2">
+                  <label className="block text-slate-700 mb-1">اختر الطالب المستهدف:</label>
+                  {studentsList.length > 0 ? (
+                    <select
+                      value={selectedStudentId}
+                      onChange={(e) => setSelectedStudentId(e.target.value)}
+                      className="w-full p-2.5 bg-white border border-teal-300 rounded-xl font-bold text-slate-900 focus:outline-none"
+                    >
+                      {studentsList.map((st) => (
+                        <option key={st.id} value={st.id}>
+                          {st.name} {st.studentCode ? `(${st.studentCode})` : ''} {st.className ? `- ${st.className}` : ''}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div className="text-[11px] text-amber-800 font-bold bg-white p-2 rounded-xl border border-amber-200">
+                      لا يوجد طلاب مسجلين بالدفعة الحالية.
+                    </div>
+                  )}
                 </div>
               )}
             </div>

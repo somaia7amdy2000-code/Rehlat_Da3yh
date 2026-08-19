@@ -1,6 +1,6 @@
 export type ChallengeCategory = 'daily' | 'weekly' | 'monthly';
 export type ChallengeDifficulty = 'سهل' | 'متوسط' | 'صعب' | 'أسطوري';
-export type ChallengeStatus = 'new' | 'in_progress' | 'completed' | 'locked';
+export type ChallengeStatus = 'new' | 'in_progress' | 'completed' | 'locked' | 'pending' | 'rejected' | 'not_started';
 
 /**
  * Standard Database Challenge Entity Schema (Supabase-ready)

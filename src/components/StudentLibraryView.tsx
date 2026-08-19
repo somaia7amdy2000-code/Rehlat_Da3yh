@@ -30,6 +30,9 @@ import { teacherService } from '../services/teacherService';
 interface StudentLibraryViewProps {
   studentBatchId?: string;
   studentBatchName?: string;
+  studentClassId?: string;
+  studentClassName?: string;
+  studentClubId?: string;
   studentClubName?: string;
   studentId?: string;
   studentCode?: string;
@@ -40,6 +43,9 @@ interface StudentLibraryViewProps {
 export const StudentLibraryView: React.FC<StudentLibraryViewProps> = ({
   studentBatchId,
   studentBatchName,
+  studentClassId,
+  studentClassName,
+  studentClubId,
   studentClubName,
   studentId,
   studentCode,
@@ -60,7 +66,7 @@ export const StudentLibraryView: React.FC<StudentLibraryViewProps> = ({
 
   useEffect(() => {
     loadLibraryData();
-  }, [studentBatchId, studentBatchName, studentClubName, studentId, studentCode, studentName]);
+  }, [studentBatchId, studentBatchName, studentClassId, studentClassName, studentClubId, studentClubName, studentId, studentCode, studentName]);
 
   const loadLibraryData = async () => {
     setLoading(true);
@@ -68,6 +74,9 @@ export const StudentLibraryView: React.FC<StudentLibraryViewProps> = ({
       const data = await teacherService.getLibraryForStudent({
         batchId: studentBatchId,
         batchName: studentBatchName,
+        classId: studentClassId,
+        className: studentClassName,
+        clubId: studentClubId,
         clubName: studentClubName,
         studentId,
         studentCode,

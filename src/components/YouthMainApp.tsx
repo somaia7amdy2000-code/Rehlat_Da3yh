@@ -642,11 +642,11 @@ export default function YouthMainApp({
       setEditNameInput(currentStudent.name || '');
       setEditAvatarInput(currentStudent.avatarUrl || '');
     }
-  }, [currentStudent]);
+  }, [currentStudent?.id, currentStudent?.name, currentStudent?.avatarUrl]);
 
   // Challenges State
   const [challengesCategoryTab, setChallengesCategoryTab] = useState<'daily' | 'weekly' | 'monthly' | 'completed'>('daily');
-  const [challengesStatusFilter, setChallengesStatusFilter] = useState<'all' | 'in_progress' | 'completed' | 'available'>('all');
+  const [challengesStatusFilter, setChallengesStatusFilter] = useState<'all' | 'not_started' | 'pending' | 'completed'>('all');
   const [selectedChallengeModal, setSelectedChallengeModal] = useState<Challenge | null>(null);
   const [studentSubmissionText, setStudentSubmissionText] = useState('');
   const [isSubmittingChallenge, setIsSubmittingChallenge] = useState(false);
@@ -672,16 +672,16 @@ export default function YouthMainApp({
         );
 
         let subStatus = existingSub?.status || 'none';
-        let challengeStatus: 'completed' | 'in_progress' | 'pending' | 'rejected' | 'available' = 'available';
+        let challengeStatus: 'completed' | 'in_progress' | 'pending' | 'rejected' | 'available' | 'not_started' = 'not_started';
 
         if (subStatus === 'approved' || bCh.status === 'completed') {
           challengeStatus = 'completed';
         } else if (subStatus === 'pending') {
-          challengeStatus = 'pending' as any;
+          challengeStatus = 'pending';
         } else if (subStatus === 'rejected') {
-          challengeStatus = 'rejected' as any;
+          challengeStatus = 'not_started';
         } else {
-          challengeStatus = 'in_progress';
+          challengeStatus = 'not_started';
         }
 
         const challengeItem: any = {
@@ -1651,12 +1651,17 @@ export default function YouthMainApp({
             if (challengesCategoryTab === 'completed' && c.status !== 'completed' && !c.done) return false;
 
             // Status Filter
-            if (challengesStatusFilter === 'in_progress' && (c.status !== 'in_progress' || c.done)) return false;
+            if (challengesStatusFilter === 'not_started' && (c.status !== 'not_started' && c.status !== 'available' && c.status !== 'new')) return false;
+            if (challengesStatusFilter === 'pending' && c.status !== 'pending') return false;
             if (challengesStatusFilter === 'completed' && c.status !== 'completed' && !c.done) return false;
-            if (challengesStatusFilter === 'available' && (c.status === 'completed' || c.done || c.status === 'locked')) return false;
 
             return true;
           });
+
+          // Counts for top status filter badges
+          const notStartedCount = challenges.filter(c => c.status === 'not_started' || c.status === 'available' || c.status === 'new').length;
+          const pendingCount = challenges.filter(c => c.status === 'pending').length;
+          const completedCount = challenges.filter(c => c.status === 'completed' || c.done).length;
 
           return (
             <motion.div 
@@ -1751,17 +1756,30 @@ export default function YouthMainApp({
                       </div>
 
                       <div className="flex flex-col sm:flex-row md:flex-col items-center gap-4 bg-white/5 backdrop-blur-md p-5 rounded-[24px] border border-white/12 shrink-0">
-                        <div className="flex items-center gap-4">
-                          <CircularProgressRing 
-                            progress={featuredChallenge.progress ?? 0} 
-                            total={featuredChallenge.total ?? featuredChallenge.total_progress ?? 1} 
-                            size={64} 
-                            strokeWidth={6} 
-                          />
+                        <div className="flex items-center gap-3">
+                          <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-bold ${
+                            featuredChallenge.status === 'completed' || featuredChallenge.done
+                              ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                              : (featuredChallenge as any).status === 'pending'
+                                ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                                : 'bg-teal-500/20 text-[#2DD4BF] border border-teal-500/30'
+                          }`}>
+                            {featuredChallenge.status === 'completed' || featuredChallenge.done ? (
+                              <CheckCircle2 className="w-6 h-6" />
+                            ) : (featuredChallenge as any).status === 'pending' ? (
+                              <Clock className="w-6 h-6" />
+                            ) : (
+                              <Target className="w-6 h-6" />
+                            )}
+                          </div>
                           <div className="text-right">
-                            <span className="text-xs text-slate-400 font-bold block">مستوى الإنجاز</span>
-                            <span className="text-base font-bold text-white font-mono">
-                              {featuredChallenge.progress ?? 0} / {featuredChallenge.total ?? featuredChallenge.total_progress ?? 1} خطوات
+                            <span className="text-xs text-slate-400 font-bold block">حالة التحدي</span>
+                            <span className="text-sm font-bold text-white">
+                              {featuredChallenge.status === 'completed' || featuredChallenge.done
+                                ? 'منجزة ✓'
+                                : (featuredChallenge as any).status === 'pending'
+                                  ? 'معلقة ⏳'
+                                  : 'لم تبدأ بعد 📌'}
                             </span>
                           </div>
                         </div>
@@ -1774,13 +1792,17 @@ export default function YouthMainApp({
                           className={`w-full px-7 py-3 rounded-[18px] font-bold text-xs shadow-lg transition-all cursor-pointer flex items-center justify-center gap-2 group ${
                             featuredChallenge.status === 'completed' || featuredChallenge.done
                               ? 'bg-emerald-500 text-white shadow-emerald-500/20'
-                              : 'bg-gradient-to-r from-[#14B8A6] to-emerald-500 hover:from-teal-500 hover:to-emerald-600 text-white shadow-teal-500/25'
+                              : (featuredChallenge as any).status === 'pending'
+                                ? 'bg-amber-500 text-white shadow-amber-500/20'
+                                : 'bg-gradient-to-r from-[#14B8A6] to-emerald-500 hover:from-teal-500 hover:to-emerald-600 text-white shadow-teal-500/25'
                           }`}
                         >
                           <span>
                             {featuredChallenge.status === 'completed' || featuredChallenge.done 
-                              ? 'عرض التفاصيل ✓' 
-                              : 'عرض التفاصيل والبدء ➔'}
+                              ? 'عرض الإنجاز ✓' 
+                              : (featuredChallenge as any).status === 'pending'
+                                ? 'عرض الحالة ⏳'
+                                : 'تسليم الحل ➔'}
                           </span>
                         </button>
                       </div>
@@ -1897,26 +1919,31 @@ export default function YouthMainApp({
                 </div>
               </div>
 
-              {/* 5. STATUS FILTERS (الكل - قيد التنفيذ - مكتمل - غير مُنجز) */}
+              {/* 5. STATUS FILTERS (الكل - لم تبدأ بعد - معلقة - منجزة) */}
               <div className="flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none bg-slate-100/70 p-1.5 rounded-[20px] border border-slate-200/60">
                 {[
-                  { id: 'all', label: 'الكل' },
-                  { id: 'in_progress', label: 'قيد التنفيذ ⚡' },
-                  { id: 'completed', label: 'مكتمل ✓' },
-                  { id: 'available', label: 'غير مُنجز 📌' },
+                  { id: 'all', label: 'الكل', count: challenges.length },
+                  { id: 'not_started', label: 'لم تبدأ بعد 📌', count: notStartedCount },
+                  { id: 'pending', label: 'معلقة ⏳', count: pendingCount },
+                  { id: 'completed', label: 'منجزة ✓', count: completedCount },
                 ].map((filter) => {
                   const isActive = challengesStatusFilter === filter.id;
                   return (
                     <button
                       key={filter.id}
                       onClick={() => setChallengesStatusFilter(filter.id as any)}
-                      className={`flex-1 min-w-[90px] py-1.5 px-3 rounded-[14px] text-xs font-bold transition-all cursor-pointer text-center whitespace-nowrap ${
+                      className={`flex-1 min-w-[90px] py-1.5 px-3 rounded-[14px] text-xs font-bold transition-all cursor-pointer text-center whitespace-nowrap flex items-center justify-center gap-1.5 ${
                         isActive
                           ? 'bg-white text-[#14B8A6] shadow-sm font-extrabold'
                           : 'text-slate-600 hover:text-slate-900'
                       }`}
                     >
-                      {filter.label}
+                      <span>{filter.label}</span>
+                      <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                        isActive ? 'bg-[#14B8A6]/15 text-[#14B8A6]' : 'bg-slate-200 text-slate-600'
+                      }`}>
+                        {filter.count}
+                      </span>
                     </button>
                   );
                 })}
@@ -1934,7 +1961,8 @@ export default function YouthMainApp({
                 ) : (
                   filteredList.map((challenge) => {
                     const isCompleted = challenge.status === 'completed' || challenge.done;
-                    const isLocked = challenge.status === 'locked';
+                    const isPending = challenge.status === 'pending';
+                    const isNotStarted = !isCompleted && !isPending;
 
                     return (
                       <motion.div
@@ -1942,14 +1970,14 @@ export default function YouthMainApp({
                         layout
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
-                        whileHover={{ y: isLocked ? 0 : -3 }}
+                        whileHover={{ y: -2 }}
                         transition={{ duration: 0.25 }}
                         onClick={() => setSelectedChallengeModal(challenge)}
                         className={`rounded-[28px] p-[24px] shadow-[0_12px_40px_rgba(15,23,42,0.06)] border transition-all cursor-pointer ${
                           isCompleted
                             ? 'bg-emerald-50/40 border-emerald-200/80'
-                            : isLocked
-                              ? 'bg-slate-50/90 border-slate-200/70 opacity-80'
+                            : isPending
+                              ? 'bg-amber-50/40 border-amber-200/80'
                               : 'bg-white border-[#EEF2F7] hover:border-teal-300/80 hover:shadow-lg'
                         }`}
                       >
@@ -1957,21 +1985,21 @@ export default function YouthMainApp({
                           {/* Top Badges Row */}
                           <div className="flex items-center justify-between text-xs font-bold">
                             <div className="flex items-center gap-2">
-                              {/* State Badge */}
+                              {/* 3 Explicit Statuses: منجزة, معلقة, لم تبدأ بعد */}
                               {isCompleted ? (
                                 <span className="bg-emerald-100 text-emerald-800 border border-emerald-300/60 px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1">
                                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                                  <span>مكتمل ✓</span>
+                                  <span>منجزة ✓</span>
                                 </span>
-                              ) : isLocked ? (
-                                <span className="bg-slate-200 text-slate-700 px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1">
-                                  <Lock className="w-3.5 h-3.5 text-slate-500" />
-                                  <span>مغلق 🔒</span>
+                              ) : isPending ? (
+                                <span className="bg-amber-100 text-amber-800 border border-amber-300/60 px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1">
+                                  <Clock className="w-3.5 h-3.5 text-amber-600" />
+                                  <span>معلقة ⏳</span>
                                 </span>
                               ) : (
-                                <span className="bg-teal-50 text-[#14B8A6] border border-teal-200/60 px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1">
-                                  <Zap className="w-3.5 h-3.5 fill-[#14B8A6]" />
-                                  <span>جاري ⚡</span>
+                                <span className="bg-slate-100 text-slate-700 border border-slate-200 px-3 py-1 rounded-full text-[11px] font-bold flex items-center gap-1">
+                                  <Target className="w-3.5 h-3.5 text-slate-500" />
+                                  <span>لم تبدأ بعد 📌</span>
                                 </span>
                               )}
 
@@ -1984,17 +2012,17 @@ export default function YouthMainApp({
                               {isCompleted ? (
                                 <span className="text-emerald-600 font-bold flex items-center gap-1">
                                   <CheckCircle2 className="w-3.5 h-3.5" />
-                                  {challenge.completedAt || 'مكتمل'}
+                                  <span>مكتمل</span>
                                 </span>
-                              ) : isLocked ? (
-                                <span className="text-slate-400 font-bold flex items-center gap-1">
-                                  <Lock className="w-3.5 h-3.5" />
-                                  {challenge.unlockReq || 'مغلق'}
+                              ) : isPending ? (
+                                <span className="text-amber-600 font-bold flex items-center gap-1">
+                                  <Clock className="w-3.5 h-3.5" />
+                                  <span>قيد المراجعة</span>
                                 </span>
                               ) : (
-                                <span className="flex items-center gap-1">
-                                  <Clock className="w-3.5 h-3.5 text-amber-500" />
-                                  {challenge.timeLeft || 'نشط'}
+                                <span className="flex items-center gap-1 text-slate-500">
+                                  <Clock className="w-3.5 h-3.5 text-slate-400" />
+                                  <span>{challenge.due_date ? `الموعد: ${challenge.due_date}` : 'متاح'}</span>
                                 </span>
                               )}
                             </div>
@@ -2005,8 +2033,8 @@ export default function YouthMainApp({
                             <div className={`w-12 h-12 rounded-[18px] flex items-center justify-center shrink-0 shadow-xs ${
                               isCompleted
                                 ? 'bg-emerald-100 text-emerald-700'
-                                : isLocked
-                                  ? 'bg-slate-200 text-slate-500'
+                                : isPending
+                                  ? 'bg-amber-100 text-amber-700'
                                   : challenge.category === 'daily'
                                     ? 'bg-teal-50 text-[#14B8A6]'
                                     : 'bg-purple-50 text-purple-600'
@@ -2016,7 +2044,7 @@ export default function YouthMainApp({
 
                             <div className="flex-1 space-y-1">
                               <div className="flex items-center justify-between flex-wrap gap-2">
-                                <h3 className={`text-base sm:text-lg font-bold ${isLocked ? 'text-slate-500' : 'text-slate-900'}`}>
+                                <h3 className="text-base sm:text-lg font-bold text-slate-900">
                                   {challenge.title}
                                 </h3>
                                 
@@ -2028,75 +2056,38 @@ export default function YouthMainApp({
                                 </div>
                               </div>
 
-                              <p className={`text-xs font-bold leading-relaxed ${isLocked ? 'text-slate-400' : 'text-[#6B7280]'}`}>
+                              <p className="text-xs font-bold leading-relaxed text-[#6B7280]">
                                 {challenge.desc}
                               </p>
                             </div>
                           </div>
 
-                          {/* Progress Bar & Actions */}
-                          <div className="pt-2 border-t border-slate-100/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                            <div className="flex-1 space-y-1.5">
-                              <div className="flex items-center justify-between text-[11px] font-bold text-[#6B7280]">
-                                <span>
-                                  {isLocked
-                                    ? `المتطلب: ${challenge.unlockReq || 'أكمل المستوى المسبق'}`
-                                    : `التقدم الأحرز: ${challenge.progress} / ${challenge.total}`}
-                                </span>
-                                {!isLocked && (
-                                  <span className="font-mono">{Math.round((challenge.progress / challenge.total) * 100)}%</span>
-                                )}
-                              </div>
-                              <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden p-0.5">
-                                <div 
-                                  className={`h-full rounded-full transition-all duration-500 ${
-                                    isCompleted
-                                      ? 'bg-emerald-500'
-                                      : isLocked
-                                        ? 'bg-slate-300'
-                                        : 'bg-[#14B8A6]'
-                                  }`}
-                                  style={{ width: `${Math.min(100, Math.round((challenge.progress / challenge.total) * 100))}%` }}
-                                />
-                              </div>
-                            </div>
+                          {/* Simplified Action Footer */}
+                          <div className="pt-2 border-t border-slate-100/80 flex items-center justify-between gap-3">
+                            <span className="text-xs font-bold text-slate-500">
+                              {isCompleted 
+                                ? '🎉 تم إنجاز التحدي واعتماده'
+                                : isPending
+                                  ? '⏳ إنجازك قيد مراجعة المعلم'
+                                  : 'اضغط لعرض التفاصيل وتسليم الإنجاز'}
+                            </span>
 
-                            <div className="shrink-0">
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  if (!isLocked && !isCompleted) {
-                                    toggleChallenge(challenge.id);
-                                  } else {
-                                    setSelectedChallengeModal(challenge);
-                                  }
-                                }}
-                                className={`w-full sm:w-auto px-6 py-2.5 rounded-[18px] font-bold text-xs transition-all cursor-pointer flex items-center justify-center gap-1.5 shadow-sm ${
-                                  isCompleted
-                                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 hover:bg-emerald-200'
-                                    : isLocked
-                                      ? 'bg-slate-200 text-slate-500 cursor-not-allowed border border-slate-300'
-                                      : 'bg-[#14B8A6] hover:bg-teal-700 text-white shadow-md'
-                                }`}
-                              >
-                                {isCompleted ? (
-                                  <>
-                                    <Check className="w-4 h-4 text-emerald-700" />
-                                    <span>مكتمل ✓</span>
-                                  </>
-                                ) : isLocked ? (
-                                  <>
-                                    <Lock className="w-4 h-4 text-slate-500" />
-                                    <span>مغلق 🔒</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <Plus className="w-4 h-4" />
-                                    <span>{challenge.progress > 0 ? 'أكمل' : 'ابدأ'} ⚡</span>
-                                  </>
-                                )}
-                              </button>
-                            </div>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedChallengeModal(challenge);
+                              }}
+                              className={`px-4 py-2 rounded-[16px] font-bold text-xs transition-all cursor-pointer flex items-center gap-1.5 shadow-sm ${
+                                isCompleted
+                                  ? 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
+                                  : isPending
+                                    ? 'bg-amber-100 text-amber-800 hover:bg-amber-200'
+                                    : 'bg-[#14B8A6] hover:bg-teal-700 text-white'
+                              }`}
+                            >
+                              <span>{isCompleted ? 'عرض الإنجاز' : isPending ? 'عرض الحالة' : 'تسليم الحل'}</span>
+                              <ChevronLeft className="w-3.5 h-3.5" />
+                            </button>
                           </div>
                         </div>
                       </motion.div>
@@ -2151,6 +2142,9 @@ export default function YouthMainApp({
             <StudentLibraryView
               studentBatchId={studentContext?.batch?.id}
               studentBatchName={studentContext?.batch?.name}
+              studentClassId={studentContext?.student?.classId}
+              studentClassName={studentContext?.student?.className}
+              studentClubId={studentContext?.student?.clubId}
               studentClubName={studentContext?.student?.clubName}
               studentId={studentContext?.student?.id}
               studentCode={studentContext?.student?.studentCode}

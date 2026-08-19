@@ -1137,5 +1137,59 @@ $$;
 
 GRANT EXECUTE ON FUNCTION public.get_student_submissions(UUID, TEXT) TO anon, authenticated;
 
+-- ----------------------------------------------------------------------------
+-- 5.8 SECURE STUDENT CLUB MEMBERS FETCH RPC
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.get_student_club_members(
+  p_student_id UUID,
+  p_student_code TEXT DEFAULT NULL,
+  p_club_id UUID DEFAULT NULL
+)
+RETURNS TABLE (
+  student_id UUID,
+  full_name TEXT,
+  class_name TEXT,
+  avatar_url TEXT,
+  student_code TEXT,
+  points INT
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF p_student_id IS NULL OR p_club_id IS NULL THEN
+    RETURN;
+  END IF;
+
+  -- 1. Verify that the requesting student belongs to this club
+  IF NOT EXISTS (
+    SELECT 1 
+    FROM public.club_members cm
+    WHERE cm.student_id = p_student_id 
+      AND cm.club_id = p_club_id
+  ) THEN
+    RETURN;
+  END IF;
+
+  -- 2. Return all members of this club with their class names
+  RETURN QUERY
+  SELECT 
+    s.id AS student_id,
+    s.full_name,
+    COALESCE(cl.name, 'الفصل') AS class_name,
+    COALESCE(s.avatar_url, '') AS avatar_url,
+    COALESCE(s.student_code, '') AS student_code,
+    COALESCE(s.points, 0) AS points
+  FROM public.club_members cm
+  JOIN public.students s ON cm.student_id = s.id
+  LEFT JOIN public.classes cl ON s.class_id = cl.id
+  WHERE cm.club_id = p_club_id
+  ORDER BY s.full_name ASC;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.get_student_club_members(UUID, TEXT, UUID) TO anon, authenticated;
+
 
 

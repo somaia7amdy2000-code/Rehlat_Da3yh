@@ -669,12 +669,15 @@ export const teacherService = {
       }
 
       // Resolve club item
-      if (supaClubId || (supaClubName && supaClubName !== 'بدون نادي')) {
+      const resolvedClubId = supaClubId || (supaStudent?.club_id) || undefined;
+      const resolvedClubName = supaClubName || (supaStudent?.club_name) || undefined;
+
+      if (resolvedClubId || (resolvedClubName && resolvedClubName !== 'بدون نادي')) {
         const allClubs = Object.values(clubsStore).flat();
         const matchedClub = allClubs.find(
           (c) =>
-            (supaClubId && c.id === supaClubId) ||
-            (supaClubName && c.name.trim().toLowerCase() === supaClubName.trim().toLowerCase())
+            (resolvedClubId && c.id === resolvedClubId) ||
+            (resolvedClubName && c.name.trim().toLowerCase() === resolvedClubName.trim().toLowerCase())
         );
         if (matchedClub) {
           supaClubId = matchedClub.id;
@@ -686,22 +689,41 @@ export const teacherService = {
             description: matchedClub.description || '',
             supervisorName: matchedClub.supervisorName || '',
             category: matchedClub.category || 'عام',
-            memberCount: 1,
+            memberCount: matchedClub.memberCount || matchedClub.members?.length || 0,
             activeTasksCount: 0,
-            members: [],
+            members: matchedClub.members || [],
           };
-        } else if (supaClubName) {
+        } else {
           supaClubItem = {
-            id: supaClubId || 'club-temp',
+            id: resolvedClubId || 'club-temp',
             batchId: targetBatchId,
-            name: supaClubName,
+            name: resolvedClubName || 'النادي',
             description: '',
             supervisorName: '',
             category: 'عام',
-            memberCount: 1,
+            memberCount: 0,
             activeTasksCount: 0,
             members: [],
           };
+        }
+
+        // Fetch real club members securely via RPC using studentId, studentCode, and clubId
+        const activeClubIdForFetch = supaClubItem.id !== 'club-temp' ? supaClubItem.id : resolvedClubId;
+        if (activeClubIdForFetch && activeClubIdForFetch !== 'club-temp' && isSupabaseConfigured) {
+          try {
+            const clubMembersRpc = await this.getClubMembersForStudent(
+              supaStudent.id,
+              supaStudent.student_code || '',
+              activeClubIdForFetch
+            );
+            if (clubMembersRpc && clubMembersRpc.length > 0) {
+              supaClubItem.id = activeClubIdForFetch;
+              supaClubItem.members = clubMembersRpc;
+              supaClubItem.memberCount = clubMembersRpc.length;
+            }
+          } catch (err) {
+            console.warn('Failed to populate supaClubItem.members via RPC in getStudentFullContext:', err);
+          }
         }
       }
 
@@ -810,7 +832,7 @@ export const teacherService = {
         batchList.push(updatedStudent);
       }
       studentsStore[targetBatchId] = batchList;
-      saveDbToLocalStorage();
+      // Note: Do NOT call saveDbToLocalStorage() here. getStudentFullContext is a read operation and must not dispatch global mutation events.
 
       const batch: Batch = batchesStore.find((b) => b.id === targetBatchId) || {
         id: targetBatchId,
@@ -848,18 +870,8 @@ export const teacherService = {
       };
     }
 
-    // IF SUPABASE IS CONFIGURED AND STUDENT WAS NOT FOUND REMOTELY:
-    if (isSupabaseConfigured) {
-      // Safe handling path: student is not in Supabase.
-      // Clean up any stale local student cache for this ID to prevent cache corruption
-      Object.keys(studentsStore).forEach((bId) => {
-        studentsStore[bId] = (studentsStore[bId] || []).filter((s) => s.id !== cleanId && s.studentCode !== cleanId);
-      });
-      saveDbToLocalStorage();
-      return null;
-    }
-
-    // IF OFFLINE MODE ONLY (!isSupabaseConfigured):
+    // IF SUPABASE STUDENT LOOKUP WAS NOT DIRECTLY RETURNED (e.g. unauthenticated student portal session),
+    // CHECK LOCAL/AUTHENTICATED STUDENT CACHE (populated by studentPortalLogin):
     for (const batchId of Object.keys(studentsStore)) {
       const list = studentsStore[batchId] || [];
       const student = list.find((s) => (isUuid ? s.id === cleanId : s.id === cleanId || (s.studentCode && s.studentCode.trim().toLowerCase() === cleanId.toLowerCase())));
@@ -874,7 +886,6 @@ export const teacherService = {
         );
         student.completedChallengesCount = finalCompletedCount;
         student.levelBadge = computeDynamicLevelBadge(student);
-        saveDbToLocalStorage();
 
         const batch: Batch = batchesStore.find((b) => b.id === batchId) || {
           id: batchId,
@@ -893,7 +904,54 @@ export const teacherService = {
         const classes = classesStore[batchId] || [];
         const classItem = classes.find((c) => (student.classId ? c.id === student.classId : c.name === student.className)) || null;
         const clubs = clubsStore[batchId] || [];
-        const clubItem = student.clubId ? clubs.find((c) => c.id === student.clubId) || null : (student.clubName && student.clubName !== 'بدون نادي' ? clubs.find((c) => c.name === student.clubName) || null : null);
+        let clubItem = student.clubId ? clubs.find((c) => c.id === student.clubId) || null : (student.clubName && student.clubName !== 'بدون نادي' ? clubs.find((c) => c.name === student.clubName) || null : null);
+
+        if (!clubItem && (student.clubId || (student.clubName && student.clubName !== 'بدون نادي'))) {
+          clubItem = {
+            id: student.clubId || 'club-temp',
+            batchId,
+            name: student.clubName || 'النادي',
+            description: '',
+            supervisorName: '',
+            category: 'عام',
+            memberCount: 0,
+            activeTasksCount: 0,
+            members: [],
+          };
+        }
+
+        // Fetch club members securely via RPC
+        const targetClubId = student.clubId || clubItem?.id;
+        if (isSupabaseConfigured && targetClubId && targetClubId !== 'club-temp') {
+          try {
+            const clubMembersRpc = await this.getClubMembersForStudent(
+              student.id,
+              student.studentCode || studentCode || '',
+              targetClubId
+            );
+            if (clubMembersRpc && clubMembersRpc.length > 0) {
+              if (!clubItem) {
+                clubItem = {
+                  id: targetClubId,
+                  batchId,
+                  name: student.clubName || 'النادي',
+                  description: '',
+                  supervisorName: '',
+                  category: 'عام',
+                  memberCount: clubMembersRpc.length,
+                  activeTasksCount: 0,
+                  members: clubMembersRpc,
+                };
+              } else {
+                clubItem.members = clubMembersRpc;
+                clubItem.memberCount = clubMembersRpc.length;
+              }
+            }
+          } catch (cmErr) {
+            console.warn('Failed to fetch club members in getStudentFullContext cached path:', cmErr);
+          }
+        }
+
         const library = await this.getLibraryByBatch(batchId);
         const announcements = this.getMessagesForStudent(student, batchId);
         const submissions = submissionsStore[batchId] || [];
@@ -912,6 +970,11 @@ export const teacherService = {
           debugInfo,
         };
       }
+    }
+
+    // IF SUPABASE IS CONFIGURED AND STUDENT WAS NOT FOUND REMOTELY NOR IN CACHE:
+    if (isSupabaseConfigured) {
+      return null;
     }
 
     return null;
@@ -1074,10 +1137,33 @@ export const teacherService = {
               description: row.club_description || '',
               supervisorName: '',
               category: row.club_category || 'عام',
-              memberCount: 1,
+              memberCount: 0,
               activeTasksCount: 0,
               members: [],
             };
+
+            if (row.club_id && row.club_id !== 'club-temp') {
+              try {
+                const members = await this.getClubMembersForStudent(
+                  studentObj.id,
+                  studentObj.studentCode,
+                  row.club_id
+                );
+                console.log('[Club Debug studentPortalLogin]', {
+                  studentId: studentObj.id,
+                  studentCode: studentObj.studentCode,
+                  clubId: row.club_id,
+                  rpcMembersCount: members.length,
+                  members,
+                });
+                if (members && members.length > 0) {
+                  clubObj.members = members;
+                  clubObj.memberCount = members.length;
+                }
+              } catch (cmErr) {
+                console.warn('Failed to fetch club members in studentPortalLogin:', cmErr);
+              }
+            }
           }
 
           // Fetch student challenges and submissions via secure RPCs
@@ -1187,6 +1273,39 @@ export const teacherService = {
             .eq('teacher_id', user.id);
 
           if (supaBatches && supaBatches.length > 0) {
+            const batchIds = supaBatches.map((sb) => sb.id);
+
+            // Fetch real counts from Supabase directly
+            const [
+              { data: supaStudentsData },
+              { data: supaClassesData },
+              { data: supaClubsData },
+            ] = await Promise.all([
+              supabase.from('students').select('id, batch_id').in('batch_id', batchIds),
+              supabase.from('classes').select('id, batch_id').in('batch_id', batchIds),
+              supabase.from('clubs').select('id, batch_id').in('batch_id', batchIds),
+            ]);
+
+            const studentCountMap: Record<string, number> = {};
+            const classCountMap: Record<string, number> = {};
+            const clubCountMap: Record<string, number> = {};
+
+            supaStudentsData?.forEach((st: any) => {
+              if (st.batch_id) {
+                studentCountMap[st.batch_id] = (studentCountMap[st.batch_id] || 0) + 1;
+              }
+            });
+            supaClassesData?.forEach((cl: any) => {
+              if (cl.batch_id) {
+                classCountMap[cl.batch_id] = (classCountMap[cl.batch_id] || 0) + 1;
+              }
+            });
+            supaClubsData?.forEach((cb: any) => {
+              if (cb.batch_id) {
+                clubCountMap[cb.batch_id] = (clubCountMap[cb.batch_id] || 0) + 1;
+              }
+            });
+
             supaBatches.forEach((sb) => {
               const existingIdx = batchesStore.findIndex(
                 (b) => b.id === sb.id || (b.code && b.code === sb.code)
@@ -1201,9 +1320,9 @@ export const teacherService = {
                 gender: (sb.gender as any) || 'female',
                 colorGradient: sb.color_gradient || 'from-rose-500/20 via-teal-500/20 to-emerald-500/20',
                 createdAt: sb.created_at ? sb.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
-                studentCount: studentsStore[sb.id]?.length || 0,
-                classCount: classesStore[sb.id]?.length || 0,
-                clubCount: clubsStore[sb.id]?.length || 0,
+                studentCount: studentCountMap[sb.id] ?? (studentsStore[sb.id]?.length || 0),
+                classCount: classCountMap[sb.id] ?? (classesStore[sb.id]?.length || 0),
+                clubCount: clubCountMap[sb.id] ?? (clubsStore[sb.id]?.length || 0),
               };
               if (existingIdx !== -1) {
                 batchesStore[existingIdx] = { ...batchesStore[existingIdx], ...mappedBatch };
@@ -1223,9 +1342,9 @@ export const teacherService = {
       const classes = classesStore[batch.id] || [];
       const clubs = computeBatchClubs(batch.id);
 
-      batch.studentCount = students.length;
-      batch.classCount = classes.length;
-      batch.clubCount = clubs.length;
+      if (batch.studentCount === undefined) batch.studentCount = students.length;
+      if (batch.classCount === undefined) batch.classCount = classes.length;
+      if (batch.clubCount === undefined) batch.clubCount = clubs.length;
     });
     saveDbToLocalStorage();
     return batchesStore;
@@ -1236,15 +1355,56 @@ export const teacherService = {
    */
   async getBatchById(batchId: string): Promise<Batch | null> {
     loadDbFromLocalStorage();
-    const batch = batchesStore.find((b) => b.id === batchId);
+    let batch = batchesStore.find((b) => b.id === batchId);
+
+    if (isSupabaseConfigured) {
+      try {
+        const realBatchUuid = isUUID(batchId) ? batchId : toUUID(batchId);
+        const [
+          { data: supaBatch },
+          { data: supaStudents },
+          { data: supaClasses },
+          { data: supaClubs },
+        ] = await Promise.all([
+          supabase.from('batches').select('*').eq('id', realBatchUuid).maybeSingle(),
+          supabase.from('students').select('id').eq('batch_id', realBatchUuid),
+          supabase.from('classes').select('id').eq('batch_id', realBatchUuid),
+          supabase.from('clubs').select('id').eq('batch_id', realBatchUuid),
+        ]);
+
+        if (supaBatch) {
+          const mapped: Batch = {
+            id: supaBatch.id,
+            name: supaBatch.name,
+            code: supaBatch.code,
+            stage: supaBatch.stage || 'المرحلة العامة',
+            supervisorName: supaBatch.supervisor_name || 'المشرفة',
+            description: supaBatch.description || '',
+            gender: (supaBatch.gender as any) || 'female',
+            colorGradient: supaBatch.color_gradient || 'from-rose-500/20 via-teal-500/20 to-emerald-500/20',
+            createdAt: supaBatch.created_at ? supaBatch.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
+            studentCount: supaStudents?.length ?? (studentsStore[batchId]?.length || 0),
+            classCount: supaClasses?.length ?? (classesStore[batchId]?.length || 0),
+            clubCount: supaClubs?.length ?? (clubsStore[batchId]?.length || 0),
+          };
+          const idx = batchesStore.findIndex((b) => b.id === mapped.id);
+          if (idx !== -1) batchesStore[idx] = { ...batchesStore[idx], ...mapped };
+          else batchesStore.push(mapped);
+          return mapped;
+        }
+      } catch (err) {
+        console.warn('Failed to fetch batch from Supabase in getBatchById:', err);
+      }
+    }
+
     if (batch) {
       const students = studentsStore[batch.id] || [];
       const classes = classesStore[batch.id] || [];
       const clubs = computeBatchClubs(batch.id);
 
-      batch.studentCount = students.length;
-      batch.classCount = classes.length;
-      batch.clubCount = clubs.length;
+      if (batch.studentCount === undefined) batch.studentCount = students.length;
+      if (batch.classCount === undefined) batch.classCount = classes.length;
+      if (batch.clubCount === undefined) batch.clubCount = clubs.length;
       return batch;
     }
     return null;
@@ -1311,18 +1471,48 @@ export const teacherService = {
           }
 
           const studentIds = supaStudents.map((ss: any) => ss.id);
-          let clubMembersByStudent: Record<string, string> = {};
+          const studentClubMap: Record<string, { clubId: string; clubName: string }> = {};
 
           if (studentIds.length > 0) {
             const { data: cmData } = await supabase
               .from('club_members')
-              .select('student_id, clubs(name)')
+              .select('student_id, club_id, clubs(id, name)')
               .in('student_id', studentIds);
 
             if (cmData) {
               cmData.forEach((cm: any) => {
-                if (cm.student_id && cm.clubs?.name) {
-                  clubMembersByStudent[cm.student_id] = cm.clubs.name;
+                if (cm.student_id) {
+                  const clubName = cm.clubs?.name || '';
+                  const clubId = cm.club_id || cm.clubs?.id || '';
+                  if (clubName) {
+                    studentClubMap[cm.student_id] = { clubId, clubName };
+                  }
+                }
+              });
+            }
+
+            // Fallback: If relation join didn't populate clubs.name, fetch clubs by club_id
+            const missingClubIds = (cmData || [])
+              .filter((cm: any) => cm.club_id && !studentClubMap[cm.student_id])
+              .map((cm: any) => cm.club_id);
+
+            if (missingClubIds.length > 0) {
+              const { data: clubRows } = await supabase
+                .from('clubs')
+                .select('id, name')
+                .in('id', missingClubIds);
+
+              const clubNameById: Record<string, string> = {};
+              clubRows?.forEach((c: any) => {
+                if (c.id && c.name) clubNameById[c.id] = c.name;
+              });
+
+              (cmData || []).forEach((cm: any) => {
+                if (cm.student_id && cm.club_id && clubNameById[cm.club_id]) {
+                  studentClubMap[cm.student_id] = {
+                    clubId: cm.club_id,
+                    clubName: clubNameById[cm.club_id],
+                  };
                 }
               });
             }
@@ -1330,7 +1520,7 @@ export const teacherService = {
 
           const mappedStudents: BatchStudent[] = supaStudents.map((ss: any) => {
             const matchedClass = currentClasses.find((c) => c.id === ss.class_id);
-            const supaClubName = clubMembersByStudent[ss.id];
+            const clubInfo = studentClubMap[ss.id];
 
             const stObj: BatchStudent = {
               id: ss.id,
@@ -1339,7 +1529,8 @@ export const teacherService = {
               studentCode: ss.student_code || '',
               className: matchedClass ? matchedClass.name : '',
               classId: ss.class_id || undefined,
-              clubName: supaClubName || 'بدون نادي',
+              clubId: clubInfo?.clubId || undefined,
+              clubName: clubInfo?.clubName || 'بدون نادي',
               levelBadge: '🌱 البداية',
               points: typeof ss.points === 'number' ? ss.points : 0,
               completedTasks: 0,
@@ -2161,6 +2352,47 @@ export const teacherService = {
   },
 
   /**
+   * Fetch all members of a club for a student via secure RPC
+   */
+  async getClubMembersForStudent(studentId: string, studentCode: string, clubId: string): Promise<ClubMember[]> {
+    if (isSupabaseConfigured && studentId && clubId) {
+      try {
+        const { data, error } = await supabase.rpc('get_student_club_members', {
+          p_student_id: studentId,
+          p_student_code: studentCode ? studentCode.trim() : null,
+          p_club_id: clubId,
+        });
+
+        console.log('[Club Debug getClubMembersForStudent]', {
+          studentId,
+          studentCode,
+          clubId,
+          rpcError: error ? error.message : null,
+          rpcDataCount: Array.isArray(data) ? data.length : 0,
+          rpcData: data,
+        });
+
+        if (!error && data && Array.isArray(data)) {
+          return data.map((st: any) => ({
+            id: st.student_id,
+            name: st.full_name,
+            className: st.class_name || 'الفصل',
+            avatarUrl: st.avatar_url || '',
+            studentCode: st.student_code || '',
+            points: typeof st.points === 'number' ? st.points : 0,
+            levelBadge: computeDynamicLevelBadge({ points: typeof st.points === 'number' ? st.points : 0 } as any),
+          }));
+        } else if (error) {
+          console.warn('Failed to fetch club members via RPC:', error.message);
+        }
+      } catch (err) {
+        console.warn('Network exception while fetching club members via RPC:', err);
+      }
+    }
+    return [];
+  },
+
+  /**
    * Create a new challenge in batch
    */
   async createChallenge(batchId: string, challenge: Omit<BatchChallenge, 'id' | 'batchId'>): Promise<BatchChallenge> {
@@ -2310,6 +2542,94 @@ export const teacherService = {
   },
 
   /**
+   * Helper to filter library items for a student with strict security matching
+   */
+  filterLibraryItemsForStudent(items: BatchLibraryItem[], query: StudentLibraryQuery): BatchLibraryItem[] {
+    const normalize = (str?: string) => (str || '').replace(/[^\p{L}\p{N}]/gu, '').toLowerCase().trim();
+
+    const studentBatchId = query.batchId || '';
+    const studentBatchNameNorm = normalize(query.batchName);
+    const studentClassId = query.classId || '';
+    const studentClassNameNorm = normalize(query.className);
+    const studentClubId = query.clubId || '';
+    const studentClubNorm = normalize(query.clubName);
+    const studentId = query.studentId || '';
+    const studentCodeNorm = normalize(query.studentCode);
+    const studentNameNorm = normalize(query.studentName);
+
+    return items.filter((item) => {
+      const targetType = item.targetType || 'all';
+
+      // Rule 1: الجميع ("all") -> Visible to all students
+      if (targetType === 'all' || item.targetName === 'الجميع') {
+        return true;
+      }
+
+      // Rule 2: دفعة محددة ("batch") -> Visible ONLY to students belonging to that batch
+      if (targetType === 'batch') {
+        if (item.batchId && studentBatchId && item.batchId === studentBatchId) {
+          return true;
+        }
+        if (item.targetId && studentBatchId && item.targetId === studentBatchId) {
+          return true;
+        }
+        const targetBatchNorm = normalize(item.targetName);
+        if (targetBatchNorm && studentBatchNameNorm && (studentBatchNameNorm === targetBatchNorm || studentBatchNameNorm.includes(targetBatchNorm) || targetBatchNorm.includes(studentBatchNameNorm))) {
+          return true;
+        }
+        return false;
+      }
+
+      // Rule 3: فصل محدد ("class") -> Visible ONLY to students in that class
+      if (targetType === ('class' as any)) {
+        if (item.targetId && studentClassId && item.targetId === studentClassId) {
+          return true;
+        }
+        const targetClassNameNorm = normalize(item.targetName);
+        if (targetClassNameNorm && studentClassNameNorm && (studentClassNameNorm === targetClassNameNorm || studentClassNameNorm.includes(targetClassNameNorm) || targetClassNameNorm.includes(studentClassNameNorm))) {
+          return true;
+        }
+        return false;
+      }
+
+      // Rule 4: نادي محدد ("club") -> Visible ONLY to students who belong to that club
+      if (targetType === 'club') {
+        if (!studentClubNorm || query.clubName === 'بدون نادي' || query.clubName === 'بدون نادي حالياً') {
+          return false;
+        }
+        if (item.targetId && studentClubId && item.targetId === studentClubId) {
+          return true;
+        }
+        const targetClubNorm = normalize(item.targetName);
+        if (targetClubNorm && (studentClubNorm === targetClubNorm || studentClubNorm.includes(targetClubNorm) || targetClubNorm.includes(studentClubNorm))) {
+          return true;
+        }
+        return false;
+      }
+
+      // Rule 5: طالب محدد ("student") -> Visible ONLY to that specific student
+      if (targetType === 'student') {
+        if (item.targetId && studentId && item.targetId === studentId) {
+          return true;
+        }
+        if (item.targetStudentId && studentId && item.targetStudentId === studentId) {
+          return true;
+        }
+        if (item.targetStudentCode && studentCodeNorm && normalize(item.targetStudentCode) === studentCodeNorm) {
+          return true;
+        }
+        const targetStudentNameNorm = normalize(item.targetName);
+        if (targetStudentNameNorm && studentNameNorm && (studentNameNorm === targetStudentNameNorm || studentNameNorm.includes(targetStudentNameNorm) || targetStudentNameNorm.includes(studentNameNorm))) {
+          return true;
+        }
+        return false;
+      }
+
+      return false;
+    });
+  },
+
+  /**
    * Fetch library items of selected batch (including global items targeted for 'all')
    */
   async getLibraryByBatch(batchId: string): Promise<BatchLibraryItem[]> {
@@ -2318,15 +2638,16 @@ export const teacherService = {
         const { data: supaLib, error } = await supabase
           .from('library_items')
           .select('*')
-          .eq('batch_id', batchId)
+          .or(`batch_id.eq.${batchId},target_type.eq.all`)
           .order('created_at', { ascending: false });
 
         if (!error && supaLib) {
-          const mappedLib: BatchLibraryItem[] = supaLib.map((sl) => ({
+          const mappedLib: BatchLibraryItem[] = supaLib.map((sl: any) => ({
             id: sl.id,
             batchId: sl.batch_id,
             title: sl.title,
             description: sl.description || '',
+            fileType: sl.file_type || 'pdf',
             type: sl.file_type || 'pdf',
             fileSize: sl.file_size || '1 MB',
             duration: sl.duration || undefined,
@@ -2336,8 +2657,24 @@ export const teacherService = {
             uploadedBy: sl.uploaded_by || 'المعلم',
             targetType: sl.target_type || 'all',
             targetId: sl.target_id || undefined,
+            targetName: sl.target_type === 'all' ? 'الجميع' : undefined,
             createdAt: sl.created_at,
+            uploadedAt: (sl.created_at || '').split('T')[0] || new Date().toISOString().split('T')[0],
           }));
+
+          // Enrich targetName from local memory stores if available
+          mappedLib.forEach((item) => {
+            if (item.targetType === 'student' && item.targetId) {
+              const allStudents = Object.values(studentsStore).flat();
+              const st = allStudents.find((s) => s.id === item.targetId);
+              if (st) item.targetName = st.name;
+            } else if (item.targetType === 'club' && item.targetId) {
+              const allClubs = Object.values(clubsStore).flat();
+              const cl = allClubs.find((c) => c.id === item.targetId);
+              if (cl) item.targetName = cl.name;
+            }
+          });
+
           libraryStore[batchId] = mappedLib;
           return mappedLib;
         }
@@ -2367,6 +2704,71 @@ export const teacherService = {
    * Fetch library items targeted specifically for a student based on real relationships (Batch, Club, Student ID)
    */
   async getLibraryForStudent(query: StudentLibraryQuery): Promise<BatchLibraryItem[]> {
+    if (isSupabaseConfigured) {
+      try {
+        // 1. Try secure student library RPC first if student credentials available
+        if (query.studentId && query.studentCode) {
+          const { data: rpcData, error: rpcErr } = await supabase.rpc('get_student_library', {
+            p_student_id: query.studentId,
+            p_student_code: query.studentCode,
+          });
+          if (!rpcErr && rpcData && Array.isArray(rpcData)) {
+            return rpcData.map((sl: any) => ({
+              id: sl.id,
+              batchId: sl.batch_id,
+              title: sl.title,
+              description: sl.description || '',
+              fileType: sl.file_type || 'pdf',
+              type: sl.file_type || 'pdf',
+              fileSize: sl.file_size || '1 MB',
+              duration: sl.duration || undefined,
+              url: sl.url,
+              thumbnailUrl: sl.thumbnail_url || undefined,
+              category: sl.category || 'عام',
+              uploadedBy: sl.uploaded_by || 'المعلم',
+              targetType: sl.target_type || 'all',
+              targetId: sl.target_id || undefined,
+              targetName: sl.target_name || (sl.target_type === 'all' ? 'الجميع' : undefined),
+              createdAt: sl.created_at,
+              uploadedAt: (sl.created_at || '').split('T')[0] || new Date().toISOString().split('T')[0],
+            }));
+          }
+        }
+
+        // 2. Direct Supabase query fallback (with strict client filtering)
+        const { data: supaLib, error: supaErr } = await supabase
+          .from('library_items')
+          .select('*')
+          .order('created_at', { ascending: false });
+
+        if (!supaErr && supaLib && supaLib.length > 0) {
+          const mapped: BatchLibraryItem[] = supaLib.map((sl: any) => ({
+            id: sl.id,
+            batchId: sl.batch_id,
+            title: sl.title,
+            description: sl.description || '',
+            fileType: sl.file_type || 'pdf',
+            type: sl.file_type || 'pdf',
+            fileSize: sl.file_size || '1 MB',
+            duration: sl.duration || undefined,
+            url: sl.url,
+            thumbnailUrl: sl.thumbnail_url || undefined,
+            category: sl.category || 'عام',
+            uploadedBy: sl.uploaded_by || 'المعلم',
+            targetType: sl.target_type || 'all',
+            targetId: sl.target_id || undefined,
+            targetName: sl.target_type === 'all' ? 'الجميع' : undefined,
+            createdAt: sl.created_at,
+            uploadedAt: (sl.created_at || '').split('T')[0] || new Date().toISOString().split('T')[0],
+          }));
+
+          return this.filterLibraryItemsForStudent(mapped, query);
+        }
+      } catch (err) {
+        console.warn('Supabase getLibraryForStudent error:', err);
+      }
+    }
+
     loadDbFromLocalStorage();
     const itemsMap = new Map<string, BatchLibraryItem>();
 
@@ -2377,66 +2779,7 @@ export const teacherService = {
       });
     });
 
-    const allItems = Array.from(itemsMap.values());
-
-    const normalize = (str?: string) => (str || '').replace(/[^\p{L}\p{N}]/gu, '').toLowerCase().trim();
-
-    const studentBatchId = query.batchId || '';
-    const studentBatchNameNorm = normalize(query.batchName);
-    const studentClubNorm = normalize(query.clubName);
-    const studentId = query.studentId || '';
-    const studentCodeNorm = normalize(query.studentCode);
-    const studentNameNorm = normalize(query.studentName);
-
-    return allItems.filter((item) => {
-      const targetType = item.targetType || 'all';
-
-      // Rule 1: الجميع ("all") -> Show to ALL students
-      if (targetType === 'all' || item.targetName === 'الجميع') {
-        return true;
-      }
-
-      // Rule 2: دفعة محددة ("batch") -> Show ONLY to students in that batch
-      if (targetType === 'batch') {
-        if (item.batchId && studentBatchId && item.batchId === studentBatchId) {
-          return true;
-        }
-        const targetBatchNorm = normalize(item.targetName);
-        if (targetBatchNorm && studentBatchNameNorm && (studentBatchNameNorm.includes(targetBatchNorm) || targetBatchNorm.includes(studentBatchNameNorm))) {
-          return true;
-        }
-        return false;
-      }
-
-      // Rule 3: نادي محدد ("club") -> Show ONLY to students who currently belong to that club
-      if (targetType === 'club') {
-        if (!studentClubNorm || query.clubName === 'بدون نادي') {
-          return false;
-        }
-        const targetClubNorm = normalize(item.targetName);
-        if (targetClubNorm && (studentClubNorm.includes(targetClubNorm) || targetClubNorm.includes(studentClubNorm))) {
-          return true;
-        }
-        return false;
-      }
-
-      // Rule 4: طالب محدد ("student") -> Show ONLY to that specific student
-      if (targetType === 'student') {
-        if (item.targetStudentId && studentId && item.targetStudentId === studentId) {
-          return true;
-        }
-        if (item.targetStudentCode && studentCodeNorm && normalize(item.targetStudentCode) === studentCodeNorm) {
-          return true;
-        }
-        const targetStudentNameNorm = normalize(item.targetName);
-        if (targetStudentNameNorm && studentNameNorm && (studentNameNorm === targetStudentNameNorm || studentNameNorm.includes(targetStudentNameNorm) || targetStudentNameNorm.includes(studentNameNorm))) {
-          return true;
-        }
-        return false;
-      }
-
-      return false;
-    });
+    return this.filterLibraryItemsForStudent(Array.from(itemsMap.values()), query);
   },
 
   /**
@@ -2445,24 +2788,36 @@ export const teacherService = {
   async uploadLibraryFile(batchId: string, file: Omit<BatchLibraryItem, 'id' | 'batchId' | 'uploadedAt'>): Promise<BatchLibraryItem> {
     loadDbFromLocalStorage();
     let newLibId = `lib-${Date.now()}`;
+    const fileType = file.fileType || file.type || 'pdf';
+    const targetType = file.targetType || 'all';
+
+    let targetId: string | null = null;
+    if (targetType === 'student') {
+      targetId = file.targetStudentId || file.targetId || null;
+    } else if (targetType === 'club' || targetType === 'class' || targetType === 'batch') {
+      targetId = file.targetId || null;
+    }
+
     if (isSupabaseConfigured) {
       try {
         const { data, error } = await supabase.from('library_items').insert({
           batch_id: batchId,
           title: file.title,
           description: file.description || '',
-          file_type: file.type || 'pdf',
+          file_type: fileType,
           file_size: file.fileSize || '1 MB',
           duration: file.duration || null,
           url: file.url || '#',
           thumbnail_url: file.thumbnailUrl || null,
           category: file.category || 'عام',
           uploaded_by: file.uploadedBy || 'المعلم',
-          target_type: file.targetType || 'all',
-          target_id: file.targetId || null
+          target_type: targetType,
+          target_id: targetId,
         }).select().single();
         if (!error && data) {
           newLibId = data.id;
+        } else if (error) {
+          console.warn('Supabase uploadLibraryFile error:', error.message);
         }
       } catch (err) {
         console.warn('Supabase uploadLibraryFile error:', err);
@@ -2470,8 +2825,12 @@ export const teacherService = {
     }
     const newItem: BatchLibraryItem = {
       ...file,
+      fileType: fileType as any,
+      type: fileType,
       id: newLibId,
       batchId,
+      targetType,
+      targetId: targetId || undefined,
       uploadedAt: new Date().toISOString().split('T')[0],
     };
     if (!libraryStore[batchId]) libraryStore[batchId] = [];
@@ -2646,9 +3005,9 @@ export const teacherService = {
   },
 
   /**
-   * Fetch pending task submissions waiting for teacher review in selected batch
+   * Fetch all submissions (pending, approved, rejected) for a selected batch
    */
-  async getPendingSubmissions(batchId: string): Promise<PendingSubmission[]> {
+  async getAllSubmissionsByBatch(batchId: string): Promise<PendingSubmission[]> {
     if (isSupabaseConfigured) {
       try {
         const { data: supaSubs, error } = await supabase
@@ -2670,20 +3029,29 @@ export const teacherService = {
             sourceName: ss.source_name || ss.challenges?.title || 'تحدي',
             contentSummary: ss.submission_content || 'تم تنفيذ التحدي بنجاح',
             taskTitle: ss.challenges?.title || ss.source_name || 'تحدي',
-            submittedAt: ss.submitted_at ? new Date(ss.submitted_at).toLocaleDateString('ar-EG') : 'الآن',
+            submittedAt: ss.submitted_at || new Date().toISOString(),
             status: ss.status || 'pending',
             rewardXp: ss.reward_xp || ss.challenges?.reward_xp || 50,
             teacherNotes: ss.teacher_notes || undefined,
             challengeId: ss.challenge_id || undefined,
           }));
           submissionsStore[batchId] = mappedSubs;
-          return mappedSubs.filter((s) => s.status === 'pending');
+          return mappedSubs;
         }
       } catch (err) {
-        console.warn('Supabase getPendingSubmissions error:', err);
+        console.warn('Supabase getAllSubmissionsByBatch error:', err);
       }
     }
-    return (submissionsStore[batchId] || []).filter((s) => s.status === 'pending');
+    loadDbFromLocalStorage();
+    return submissionsStore[batchId] || [];
+  },
+
+  /**
+   * Fetch pending task submissions waiting for teacher review in selected batch
+   */
+  async getPendingSubmissions(batchId: string): Promise<PendingSubmission[]> {
+    const all = await this.getAllSubmissionsByBatch(batchId);
+    return all.filter((s) => s.status === 'pending');
   },
 
   /**
@@ -3612,15 +3980,36 @@ export const teacherService = {
 
   // --- LIBRARY CRUD ---
   async updateLibraryFile(batchId: string, itemId: string, updates: Partial<BatchLibraryItem>): Promise<BatchLibraryItem> {
+    const fileType = updates.fileType || updates.type;
+    const targetType = updates.targetType;
+    let targetId: string | null | undefined = undefined;
+    if (targetType === 'student') {
+      targetId = updates.targetStudentId || updates.targetId || null;
+    } else if (targetType === 'club' || targetType === 'class' || targetType === 'batch') {
+      targetId = updates.targetId || null;
+    } else if (targetType === 'all') {
+      targetId = null;
+    }
+
     if (isSupabaseConfigured) {
       try {
         const supaPayload: any = {};
-        if (updates.title) supaPayload.title = updates.title;
-        if (updates.description) supaPayload.description = updates.description;
-        if (updates.category) supaPayload.category = updates.category;
-        if (updates.targetType) supaPayload.target_type = updates.targetType;
+        if (updates.title !== undefined) supaPayload.title = updates.title;
+        if (updates.description !== undefined) supaPayload.description = updates.description;
+        if (updates.category !== undefined) supaPayload.category = updates.category;
+        if (fileType !== undefined) supaPayload.file_type = fileType;
+        if (updates.fileSize !== undefined) supaPayload.file_size = updates.fileSize;
+        if (updates.duration !== undefined) supaPayload.duration = updates.duration;
+        if (updates.url !== undefined) supaPayload.url = updates.url;
+        if (updates.thumbnailUrl !== undefined) supaPayload.thumbnail_url = updates.thumbnailUrl;
+        if (targetType !== undefined) supaPayload.target_type = targetType;
+        if (targetId !== undefined) supaPayload.target_id = targetId;
+
         if (Object.keys(supaPayload).length > 0) {
-          await supabase.from('library_items').update(supaPayload).eq('id', itemId);
+          const { error } = await supabase.from('library_items').update(supaPayload).eq('id', itemId);
+          if (error) {
+            console.warn('Supabase updateLibraryFile error:', error.message);
+          }
         }
       } catch (err) {
         console.warn('Supabase updateLibraryFile error:', err);
@@ -3633,7 +4022,13 @@ export const teacherService = {
       const list = libraryStore[key] || [];
       const idx = list.findIndex((l) => l.id === itemId);
       if (idx !== -1) {
-        const updated = { ...list[idx], ...updates };
+        const updated: BatchLibraryItem = { ...list[idx], ...updates };
+        if (fileType) {
+          updated.fileType = fileType as any;
+          updated.type = fileType;
+        }
+        if (targetType) updated.targetType = targetType;
+        if (targetId !== undefined) updated.targetId = targetId || undefined;
         list[idx] = updated;
         libraryStore[key] = [...list];
         updatedItem = updated;
@@ -3646,7 +4041,10 @@ export const teacherService = {
   async deleteLibraryFile(batchId: string, itemId: string): Promise<boolean> {
     if (isSupabaseConfigured) {
       try {
-        await supabase.from('library_items').delete().eq('id', itemId);
+        const { error } = await supabase.from('library_items').delete().eq('id', itemId);
+        if (error) {
+          console.warn('Supabase deleteLibraryFile error:', error.message);
+        }
       } catch (err) {
         console.warn('Supabase deleteLibraryFile error:', err);
       }

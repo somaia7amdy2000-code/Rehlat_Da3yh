@@ -115,7 +115,7 @@ export interface BatchChallenge {
 }
 
 export type LibraryResourceType = 'pdf' | 'video' | 'audio' | 'image' | 'link' | 'doc';
-export type LibraryTargetAudience = 'all' | 'batch' | 'club' | 'student';
+export type LibraryTargetAudience = 'all' | 'batch' | 'class' | 'club' | 'student';
 
 export interface BatchLibraryItem {
   id: string;
@@ -141,6 +141,9 @@ export interface BatchLibraryItem {
 export interface StudentLibraryQuery {
   batchId?: string;
   batchName?: string;
+  classId?: string;
+  className?: string;
+  clubId?: string;
   clubName?: string;
   studentId?: string;
   studentCode?: string;

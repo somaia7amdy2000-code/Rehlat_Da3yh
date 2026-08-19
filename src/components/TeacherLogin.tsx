@@ -1,18 +1,47 @@
 import React, { useState } from 'react';
 import { motion } from 'motion/react';
-import { Mail, Lock, Eye, EyeOff, BookOpen, Sparkles, LogIn, UserPlus, HelpCircle } from 'lucide-react';
+import { Mail, Lock, Eye, EyeOff, BookOpen, Sparkles, LogIn, UserPlus, HelpCircle, AlertCircle, Loader2 } from 'lucide-react';
+import { teacherService } from '../services/teacherService';
 
-export default function TeacherLogin() {
+interface TeacherLoginProps {
+  onLoginSuccess?: () => void;
+}
+
+export default function TeacherLogin({ onLoginSuccess }: TeacherLoginProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(true);
   const [activeTab, setActiveTab] = useState<'login' | 'register'>('login');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Front-end UI display only
-    alert('هذه واجهة عرض فقط. لم يتم ربط تسجيل الدخول بقاعدة البيانات بعد.');
+    if (activeTab === 'register') {
+      alert('تسجيل حساب جديد غير متاح حالياً. يرجى التواصل مع إدارة المنصة لتفعيل حسابك.');
+      return;
+    }
+
+    setErrorMessage(null);
+    setIsLoading(true);
+
+    try {
+      const result = await teacherService.loginTeacherWithSupabase(
+        email,
+        password
+      );
+
+      if (!result.success) {
+        setErrorMessage(result.error || 'البريد الإلكتروني أو كلمة المرور غير صحيحة');
+      } else {
+        onLoginSuccess?.();
+      }
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'حدث خطأ أثناء محاولة تسجيل الدخول. يرجى المحاولة مرة أخرى.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -64,6 +93,18 @@ export default function TeacherLogin() {
                 : 'أنشئ حسابك للبدء في إدارة الفصول وتتبع نقاط الطلاب'}
             </p>
           </div>
+
+          {/* Error Message Alert */}
+          {errorMessage && (
+            <motion.div
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mb-5 p-3.5 bg-rose-50 border border-rose-200 rounded-2xl text-rose-700 text-xs sm:text-sm font-semibold flex items-center gap-2.5 shadow-xs"
+            >
+              <AlertCircle className="w-5 h-5 shrink-0 text-rose-600" />
+              <span className="flex-1 leading-relaxed">{errorMessage}</span>
+            </motion.div>
+          )}
 
           {/* Login Form */}
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -167,13 +208,25 @@ export default function TeacherLogin() {
 
             {/* Submit Button */}
             <motion.button
-              whileHover={{ scale: 1.01 }}
-              whileTap={{ scale: 0.99 }}
+              whileHover={!isLoading ? { scale: 1.01 } : {}}
+              whileTap={!isLoading ? { scale: 0.99 } : {}}
               type="submit"
-              className="w-full mt-2 py-3.5 px-4 bg-gradient-to-r from-emerald-600 via-teal-600 to-sky-600 hover:from-emerald-700 hover:via-teal-700 hover:to-sky-700 text-white font-bold rounded-xl shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 transition-all"
+              disabled={isLoading}
+              className={`w-full mt-2 py-3.5 px-4 bg-gradient-to-r from-emerald-600 via-teal-600 to-sky-600 hover:from-emerald-700 hover:via-teal-700 hover:to-sky-700 text-white font-bold rounded-xl shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2 transition-all ${
+                isLoading ? 'opacity-80 cursor-not-allowed' : 'cursor-pointer'
+              }`}
             >
-              <LogIn className="w-5 h-5" />
-              <span>{activeTab === 'login' ? 'تسجيل الدخول' : 'إنشاء الحساب الان'}</span>
+              {isLoading ? (
+                <>
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span>جاري تسجيل الدخول...</span>
+                </>
+              ) : (
+                <>
+                  <LogIn className="w-5 h-5" />
+                  <span>{activeTab === 'login' ? 'تسجيل الدخول' : 'إنشاء الحساب الان'}</span>
+                </>
+              )}
             </motion.button>
           </form>
 
@@ -184,7 +237,10 @@ export default function TeacherLogin() {
                 ليس لديك حساب معلم بعد؟{' '}
                 <button
                   type="button"
-                  onClick={() => setActiveTab('register')}
+                  onClick={() => {
+                    setActiveTab('register');
+                    setErrorMessage(null);
+                  }}
                   className="font-bold text-emerald-600 hover:text-emerald-700 hover:underline transition-all"
                 >
                   إنشاء حساب معلم جديد
@@ -195,7 +251,10 @@ export default function TeacherLogin() {
                 لديك حساب بالفعل؟{' '}
                 <button
                   type="button"
-                  onClick={() => setActiveTab('login')}
+                  onClick={() => {
+                    setActiveTab('login');
+                    setErrorMessage(null);
+                  }}
                   className="font-bold text-emerald-600 hover:text-emerald-700 hover:underline transition-all"
                 >
                   تسجيل الدخول

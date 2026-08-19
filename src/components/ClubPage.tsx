@@ -167,6 +167,68 @@ export const ClubPage: React.FC<ClubPageProps> = ({
         setIsLoading(true);
 
         if (currentClub && currentClub.name) {
+          // Resolve club members from multiple fallback layers
+          let clubMembersMapped: ClubMember[] = [];
+
+          const activeClubId = currentClub.id !== 'club-temp' && currentClub.id ? currentClub.id : (studentContext?.student?.clubId || studentContext?.clubItem?.id);
+          const activeStudentId = studentId || studentContext?.student?.id;
+          const activeStudentCode = studentCode || studentContext?.student?.studentCode || '';
+
+          if (currentClub.members && currentClub.members.length > 0) {
+            clubMembersMapped = currentClub.members.map((m) => ({
+              id: m.id,
+              name: m.name,
+              className: m.className,
+              levelBadge: m.levelBadge || '🌱 البداية',
+              avatarUrl: m.avatarUrl,
+            }));
+          } else if (activeStudentId && activeClubId && activeClubId !== 'club-temp') {
+            try {
+              const fetchedMembers = await teacherService.getClubMembersForStudent(
+                activeStudentId,
+                activeStudentCode,
+                activeClubId
+              );
+              if (fetchedMembers && fetchedMembers.length > 0) {
+                clubMembersMapped = fetchedMembers.map((m) => ({
+                  id: m.id,
+                  name: m.name,
+                  className: m.className,
+                  levelBadge: m.levelBadge || '🌱 البداية',
+                  avatarUrl: m.avatarUrl,
+                }));
+              }
+            } catch (err) {
+              console.warn('Failed to fetch club members in ClubPage:', err);
+            }
+          }
+
+          if (clubMembersMapped.length === 0 && allBatchStudents && allBatchStudents.length > 0) {
+            clubMembersMapped = (allBatchStudents || [])
+              .filter((s) => s.clubName && s.clubName !== 'بدون نادي' && s.clubName.trim().toLowerCase() === currentClub.name.trim().toLowerCase())
+              .map((s) => ({
+                id: s.id,
+                name: s.name,
+                className: s.className,
+                levelBadge: s.levelBadge || '🌱 البداية',
+                avatarUrl: s.avatarUrl,
+              }));
+          }
+
+          const realMemberCount = clubMembersMapped.length > 0
+            ? clubMembersMapped.length
+            : (currentClub.memberCount || 0);
+
+          console.log('[Club Debug]', {
+            studentId,
+            studentCode,
+            clubId: currentClub?.id,
+            rpcMembers: clubMembersMapped,
+            'currentClub.members': currentClub?.members,
+            'currentClub.memberCount': currentClub?.memberCount,
+            realMemberCount,
+          });
+
           const dynamicClubInfo: ClubInfo = {
             id: currentClub.id,
             name: currentClub.name,
@@ -174,21 +236,11 @@ export const ClubPage: React.FC<ClubPageProps> = ({
             description: currentClub.description || 'نادي نشاط مخصص للدفعة.',
             supervisorName: currentClub.supervisorName || 'معلم الحلقة',
             supervisorTitle: 'مشرف النادي',
-            memberCount: currentClub.memberCount || 0,
+            memberCount: realMemberCount,
             gradeLevel: batch?.stage || 'المرحلة العامة',
             stage: batch?.stage || 'المرحلة العامة',
             category: 'نادي النشاط الطلابي',
           };
-
-          const clubMembersMapped: ClubMember[] = (allBatchStudents || [])
-            .filter((s) => s.clubName && s.clubName !== 'بدون نادي' && s.clubName.trim().toLowerCase() === currentClub.name.trim().toLowerCase())
-            .map((s) => ({
-              id: s.id,
-              name: s.name,
-              className: s.className,
-              levelBadge: s.levelBadge || '🌱 البداية',
-              avatarUrl: s.avatarUrl,
-            }));
 
           const batchId = batch?.id || '';
           let clubChallenges = (studentChallenges || []).filter(
@@ -257,7 +309,7 @@ export const ClubPage: React.FC<ClubPageProps> = ({
     return () => {
       isMounted = false;
     };
-  }, [currentClub, batch, allBatchStudents, studentChallenges, studentSubmissions]);
+  }, [currentClub?.id, currentClub?.name, batch?.id, studentId, studentCode]);
 
   // Handle opening proof submission modal
   const handleOpenSubmitModal = (task: ClubTask) => {

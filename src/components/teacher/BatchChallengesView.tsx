@@ -7,6 +7,7 @@ import { teacherService } from '../../services/teacherService';
 interface BatchChallengesViewProps {
   batch: Batch;
   challenges: BatchChallenge[];
+  submissions?: PendingSubmission[];
   pendingSubmissions?: PendingSubmission[];
   onOpenCreateChallenge: () => void;
   onReviewSubmission?: (submissionId: string, status: 'approved' | 'rejected', notes: string) => void;
@@ -16,6 +17,7 @@ interface BatchChallengesViewProps {
 export const BatchChallengesView: React.FC<BatchChallengesViewProps> = ({
   batch,
   challenges,
+  submissions,
   pendingSubmissions = [],
   onOpenCreateChallenge,
   onReviewSubmission,
@@ -24,11 +26,16 @@ export const BatchChallengesView: React.FC<BatchChallengesViewProps> = ({
   const [selectedChallengeDetail, setSelectedChallengeDetail] = useState<BatchChallenge | null>(null);
   const [deletingChallenge, setDeletingChallenge] = useState<BatchChallenge | null>(null);
 
+  // Use full submissions list if provided, fallback to pendingSubmissions
+  const allSubsList = submissions && submissions.length > 0 ? submissions : pendingSubmissions;
+
   // Filter challenge submissions
-  const challengeSubs = pendingSubmissions.filter(
+  const challengeSubs = allSubsList.filter(
     (s) => s.sourceType === 'challenge' || (s.taskTitle && !s.achievementId)
   );
   const pendingChallengeSubs = challengeSubs.filter((s) => s.status === 'pending');
+
+  const normalizeStr = (str?: string) => (str || '').replace(/[^\p{L}\p{N}]/gu, '').toLowerCase().trim();
 
   const handleConfirmDelete = async () => {
     if (!deletingChallenge) return;
@@ -92,7 +99,16 @@ export const BatchChallengesView: React.FC<BatchChallengesViewProps> = ({
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {pendingChallengeSubs.map((sub) => {
-              const matchingCh = challenges.find((c) => c && (c.title === sub.taskTitle || c.title === sub.sourceName));
+              const matchingCh = challenges.find((c) => {
+                if (!c) return false;
+                if (sub.challengeId && c.id && sub.challengeId === c.id) return true;
+                const cNorm = normalizeStr(c.title);
+                const sTaskNorm = normalizeStr(sub.taskTitle);
+                const sSourceNorm = normalizeStr(sub.sourceName);
+                if (cNorm && (sTaskNorm === cNorm || sSourceNorm === cNorm)) return true;
+                if (c.title === sub.taskTitle || c.title === sub.sourceName) return true;
+                return false;
+              });
               return (
                 <motion.div
                   key={sub.id}
@@ -167,9 +183,17 @@ export const BatchChallengesView: React.FC<BatchChallengesViewProps> = ({
             const challengeId = ch.id || `ch-old-${index}`;
             const isSelected = selectedChallengeDetail?.id === challengeId;
             const chTitle = ch.title || 'تحدي';
-            const challengeSubmissions = challengeSubs.filter(
-              (s) => (s.taskTitle && s.taskTitle === chTitle) || (s.sourceName && s.sourceName === chTitle)
-            );
+            const chTitleNorm = normalizeStr(ch.title);
+
+            // Robust submission matching: by challengeId, or normalized taskTitle/sourceName
+            const challengeSubmissions = challengeSubs.filter((s) => {
+              if (s.challengeId && ch.id && s.challengeId === ch.id) return true;
+              const sTaskNorm = normalizeStr(s.taskTitle);
+              const sSourceNorm = normalizeStr(s.sourceName);
+              if (chTitleNorm && (sTaskNorm === chTitleNorm || sSourceNorm === chTitleNorm)) return true;
+              if (s.taskTitle && (s.taskTitle === chTitle || s.sourceName === chTitle)) return true;
+              return false;
+            });
 
             return (
               <motion.div
@@ -246,9 +270,9 @@ export const BatchChallengesView: React.FC<BatchChallengesViewProps> = ({
                       {challengeSubmissions.length === 0 ? (
                         <p className="text-[10px] font-bold text-slate-400">لا توجد إجابات مقدمة بعد لهذا التحدي.</p>
                       ) : (
-                        <div className="space-y-2 max-h-48 overflow-y-auto">
+                        <div className="space-y-2 max-h-56 overflow-y-auto">
                           {challengeSubmissions.map((s) => (
-                            <div key={s.id} className="bg-white p-2.5 rounded-xl border border-slate-200 text-xs space-y-1">
+                            <div key={s.id} className="bg-white p-2.5 rounded-xl border border-slate-200 text-xs space-y-2">
                               <div className="flex items-center justify-between">
                                 <span className="font-black text-slate-800">{s.studentName} ({s.className})</span>
                                 <span
@@ -264,6 +288,25 @@ export const BatchChallengesView: React.FC<BatchChallengesViewProps> = ({
                                 </span>
                               </div>
                               <p className="text-slate-600 text-[11px] font-bold">{s.contentSummary}</p>
+
+                              {s.status === 'pending' && onReviewSubmission && (
+                                <div className="flex items-center gap-1.5 pt-1 border-t border-slate-100">
+                                  <button
+                                    onClick={() => onReviewSubmission(s.id, 'approved', 'أحسنت! تم قبول التحدي بنجاح 🎉')}
+                                    className="flex-1 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-black text-[11px] flex items-center justify-center gap-1 cursor-pointer transition-all"
+                                  >
+                                    <CheckCircle2 className="w-3.5 h-3.5" />
+                                    <span>قبول (+{s.rewardXp || ch.rewardXp || 50} XP)</span>
+                                  </button>
+                                  <button
+                                    onClick={() => onReviewSubmission(s.id, 'rejected', 'يرجى مراجعة وتعديل الإنجاز')}
+                                    className="flex-1 py-1.5 rounded-lg bg-rose-100 hover:bg-rose-200 text-rose-800 font-black text-[11px] flex items-center justify-center gap-1 cursor-pointer transition-all"
+                                  >
+                                    <XCircle className="w-3.5 h-3.5" />
+                                    <span>رفض</span>
+                                  </button>
+                                </div>
+                              )}
                             </div>
                           ))}
                         </div>

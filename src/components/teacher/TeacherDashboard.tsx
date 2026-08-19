@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { teacherService } from '../../services/teacherService';
 import {
@@ -57,6 +57,7 @@ export const TeacherDashboard: React.FC<{ onLogout?: () => void }> = ({ onLogout
   const [library, setLibrary] = useState<BatchLibraryItem[]>([]);
   const [announcements, setAnnouncements] = useState<BatchAnnouncement[]>([]);
   const [pendingSubmissions, setPendingSubmissions] = useState<PendingSubmission[]>([]);
+  const [allSubmissions, setAllSubmissions] = useState<PendingSubmission[]>([]);
 
   // Modals visibility states
   const [isCreateBatchOpen, setIsCreateBatchOpen] = useState(false);
@@ -82,6 +83,21 @@ export const TeacherDashboard: React.FC<{ onLogout?: () => void }> = ({ onLogout
   // Toast Notification
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  const classesNames = useMemo(() => classes.map((c) => c.name), [classes]);
+  const clubsNames = useMemo(() => clubs.map((c) => c.name), [clubs]);
+  const batchesListModal = useMemo(() => batches.map((b) => ({ id: b.id, name: b.name })), [batches]);
+  const clubsListModal = useMemo(() => clubs.map((c) => ({ id: c.id, name: c.name })), [clubs]);
+  const studentsListModal = useMemo(
+    () =>
+      students.map((s) => ({
+        id: s.id,
+        name: s.name,
+        studentCode: s.studentCode,
+        className: s.className,
+      })),
+    [students]
+  );
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3500);
@@ -99,7 +115,7 @@ export const TeacherDashboard: React.FC<{ onLogout?: () => void }> = ({ onLogout
 
   // Fetch Batch specific data when a batch is selected
   useEffect(() => {
-    if (!selectedBatch) return;
+    if (!selectedBatch?.id) return;
     loadBatchData(selectedBatch.id);
 
     const handleUpdate = () => {
@@ -112,7 +128,7 @@ export const TeacherDashboard: React.FC<{ onLogout?: () => void }> = ({ onLogout
       window.removeEventListener('rihlat_db_updated', handleUpdate);
       window.removeEventListener('rihlat_settings_updated', handleUpdate);
     };
-  }, [selectedBatch]);
+  }, [selectedBatch?.id]);
 
   const loadBatchData = async (batchId: string) => {
     // 1. Load classes first to populate classes mapping
@@ -127,7 +143,7 @@ export const TeacherDashboard: React.FC<{ onLogout?: () => void }> = ({ onLogout
       batchChallenges,
       batchLibrary,
       batchAnnouncements,
-      batchSubmissions,
+      batchAllSubs,
     ] = await Promise.all([
       teacherService.getBatchStats(batchId),
       teacherService.getStudentsByBatch(batchId),
@@ -135,7 +151,7 @@ export const TeacherDashboard: React.FC<{ onLogout?: () => void }> = ({ onLogout
       teacherService.getChallengesByBatch(batchId),
       teacherService.getLibraryByBatch(batchId),
       teacherService.getAnnouncementsByBatch(batchId),
-      teacherService.getPendingSubmissions(batchId),
+      teacherService.getAllSubmissionsByBatch(batchId),
     ]);
 
     setStats(batchStats);
@@ -144,7 +160,8 @@ export const TeacherDashboard: React.FC<{ onLogout?: () => void }> = ({ onLogout
     setChallenges(batchChallenges);
     setLibrary(batchLibrary);
     setAnnouncements(batchAnnouncements);
-    setPendingSubmissions(batchSubmissions);
+    setAllSubmissions(batchAllSubs);
+    setPendingSubmissions(batchAllSubs.filter((s) => s.status === 'pending'));
   };
 
   // --- BATCH HANDLERS ---
@@ -576,6 +593,7 @@ export const TeacherDashboard: React.FC<{ onLogout?: () => void }> = ({ onLogout
                   <BatchChallengesView
                     batch={selectedBatch}
                     challenges={challenges}
+                    submissions={allSubmissions}
                     pendingSubmissions={pendingSubmissions}
                     onOpenCreateChallenge={() => setIsCreateChallengeOpen(true)}
                     onReviewSubmission={handleReviewSubmission}
@@ -644,8 +662,8 @@ export const TeacherDashboard: React.FC<{ onLogout?: () => void }> = ({ onLogout
         onClose={() => setIsAddStudentOpen(false)}
         onSubmit={handleAddStudent}
         onImportExcel={handleImportExcel}
-        classesList={classes.map((c) => c.name)}
-        clubsList={clubs.map((c) => c.name)}
+        classesList={classesNames}
+        clubsList={clubsNames}
         initialMode="manual"
       />
 
@@ -656,14 +674,9 @@ export const TeacherDashboard: React.FC<{ onLogout?: () => void }> = ({ onLogout
           setPresetChallengeClubName(null);
         }}
         onSubmit={handleCreateChallenge}
-        classesList={classes.map((c) => c.name)}
-        clubsList={clubs.map((c) => ({ id: c.id, name: c.name }))}
-        studentsList={students.map((s) => ({
-          id: s.id,
-          name: s.name,
-          studentCode: s.studentCode,
-          className: s.className,
-        }))}
+        classesList={classesNames}
+        clubsList={clubsListModal}
+        studentsList={studentsListModal}
         initialTargetType={presetChallengeClubName ? 'club' : undefined}
         initialTargetName={presetChallengeClubName || undefined}
       />
@@ -672,15 +685,10 @@ export const TeacherDashboard: React.FC<{ onLogout?: () => void }> = ({ onLogout
         isOpen={isAddAnnouncementOpen}
         onClose={() => setIsAddAnnouncementOpen(false)}
         onSubmit={handleAddAnnouncement}
-        batchesList={batches.map((b) => ({ id: b.id, name: b.name }))}
-        classesList={classes.map((c) => c.name)}
-        clubsList={clubs.map((c) => c.name)}
-        studentsList={students.map((s) => ({
-          id: s.id,
-          name: s.name,
-          studentCode: s.studentCode,
-          className: s.className,
-        }))}
+        batchesList={batchesListModal}
+        classesList={classesNames}
+        clubsList={clubsNames}
+        studentsList={studentsListModal}
         currentBatchId={selectedBatch?.id}
         currentBatchName={selectedBatch?.name}
       />
@@ -698,14 +706,9 @@ export const TeacherDashboard: React.FC<{ onLogout?: () => void }> = ({ onLogout
         onClose={() => setIsUploadLibraryOpen(false)}
         onSubmit={handleUploadLibrary}
         currentBatchName={selectedBatch?.name}
-        batchesList={batches.map((b) => ({ id: b.id, name: b.name }))}
-        clubsList={clubs.map((c) => c.name)}
-        studentsList={students.map((s) => ({
-          id: s.id,
-          name: s.name,
-          studentCode: s.studentCode,
-          className: s.className,
-        }))}
+        batchesList={batchesListModal}
+        clubsList={clubsListModal}
+        studentsList={studentsListModal}
       />
 
       <ReviewSubmissionModal
@@ -720,16 +723,16 @@ export const TeacherDashboard: React.FC<{ onLogout?: () => void }> = ({ onLogout
         onClose={() => setEditingStudent(null)}
         onSubmit={handleEditStudent}
         onDelete={handleDeleteStudent}
-        classesList={classes.map((c) => c.name)}
-        clubsList={clubs.map((c) => c.name)}
+        classesList={classesNames}
+        clubsList={clubsNames}
       />
 
       <ImportExcelModal
         isOpen={isImportExcelOpen}
         onClose={() => setIsImportExcelOpen(false)}
         onImport={handleImportExcel}
-        classesList={classes.map((c) => c.name)}
-        clubsList={clubs.map((c) => c.name)}
+        classesList={classesNames}
+        clubsList={clubsNames}
       />
 
       <EditLibraryModal
@@ -742,7 +745,14 @@ export const TeacherDashboard: React.FC<{ onLogout?: () => void }> = ({ onLogout
           setEditingLibraryItem(null);
         }}
         currentBatchName={selectedBatch?.name}
-        clubsList={clubs.map((c) => c.name)}
+        batchesList={batches.map((b) => ({ id: b.id, name: b.name }))}
+        clubsList={clubs.map((c) => ({ id: c.id, name: c.name }))}
+        studentsList={students.map((s) => ({
+          id: s.id,
+          name: s.name,
+          studentCode: s.studentCode,
+          className: s.className,
+        }))}
       />
 
       <ConfirmDeleteLibraryModal
