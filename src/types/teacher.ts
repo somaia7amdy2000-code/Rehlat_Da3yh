@@ -136,6 +136,8 @@ export interface BatchLibraryItem {
   targetName?: string;
   targetStudentId?: string;
   targetStudentCode?: string;
+  fileObject?: File;
+  storagePath?: string;
 }
 
 export interface StudentLibraryQuery {
@@ -192,4 +194,19 @@ export interface BatchDashboardStats {
   pendingReviews: number;
   activeClubs: number;
   totalAnnouncements: number;
+}
+
+export interface ExcelImportFailure {
+  name: string;
+  studentCode: string;
+  reason: string;
+}
+
+export interface ExcelImportResult {
+  totalRows: number;
+  validRows: number;
+  savedInSupabase: number;
+  failedCount: number;
+  successfulStudents: BatchStudent[];
+  failures: ExcelImportFailure[];
 }

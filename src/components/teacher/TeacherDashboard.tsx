@@ -11,6 +11,7 @@ import {
   BatchClub,
   BatchChallenge,
   BatchLibraryItem,
+  ExcelImportResult,
 } from '../../types/teacher';
 import { BatchSelectionHome } from './BatchSelectionHome';
 import { TeacherDashboardHeader, TeacherTab } from './TeacherDashboardHeader';
@@ -40,6 +41,7 @@ import {
   EditClubModal,
   EditLibraryModal,
   ConfirmDeleteLibraryModal,
+  ExcelImportResultModal,
 } from './ActionModals';
 import { CheckCircle2, Sparkles } from 'lucide-react';
 
@@ -79,6 +81,8 @@ export const TeacherDashboard: React.FC<{ onLogout?: () => void }> = ({ onLogout
   const [editingLibraryItem, setEditingLibraryItem] = useState<BatchLibraryItem | null>(null);
   const [deletingLibraryItem, setDeletingLibraryItem] = useState<BatchLibraryItem | null>(null);
   const [selectedSubmissionForReview, setSelectedSubmissionForReview] = useState<PendingSubmission | null>(null);
+  const [excelImportResult, setExcelImportResult] = useState<ExcelImportResult | null>(null);
+  const [isExcelResultModalOpen, setIsExcelResultModalOpen] = useState(false);
 
   // Toast Notification
   const [toastMessage, setToastMessage] = useState<string | null>(null);
@@ -282,8 +286,16 @@ export const TeacherDashboard: React.FC<{ onLogout?: () => void }> = ({ onLogout
   const handleImportExcel = async (importedList: Array<{ name: string; studentCode?: string; className: string; clubName?: string; points?: number }>) => {
     if (!selectedBatch) return;
     try {
-      await teacherService.importStudentsFromExcel(selectedBatch.id, importedList);
-      showToast(`📊 تم استيراد ${importedList.length} طلاب إلى الدفعة بنجاح!`);
+      const result = await teacherService.importStudentsFromExcel(selectedBatch.id, importedList);
+      setExcelImportResult(result);
+      setIsExcelResultModalOpen(true);
+
+      if (result.savedInSupabase > 0) {
+        showToast(`📊 تم حفظ ${result.savedInSupabase} طلاب في قاعدة البيانات بنجاح!`);
+      } else {
+        showToast(`⚠️ تعذر حفظ أي طالب في قاعدة البيانات.`);
+      }
+
       loadBatchData(selectedBatch.id);
       loadBatches();
     } catch (err: any) {
@@ -384,14 +396,20 @@ export const TeacherDashboard: React.FC<{ onLogout?: () => void }> = ({ onLogout
     targetStudentCode?: string;
     fileSize?: string;
     duration?: string;
+    fileObject?: File;
   }) => {
     if (!selectedBatch) return;
-    await teacherService.uploadLibraryFile(selectedBatch.id, {
-      ...data,
-      uploadedBy: 'أستاذ الدفعة',
-    });
-    showToast(`📚 تم إضافة ونشر المورد التعليمي (${data.title}) بنجاح للمكتبة!`);
-    loadBatchData(selectedBatch.id);
+    try {
+      await teacherService.uploadLibraryFile(selectedBatch.id, {
+        ...data,
+        uploadedBy: 'أستاذ الدفعة',
+      });
+      showToast(`📚 تم إضافة ونشر المورد التعليمي (${data.title}) بنجاح للمكتبة!`);
+      loadBatchData(selectedBatch.id);
+    } catch (err: any) {
+      showToast(`❌ ${err.message || 'تعذر رفع المورد للمكتبة'}`);
+      throw err;
+    }
   };
 
   const handleEditLibrary = async (itemId: string, updates: Partial<BatchLibraryItem>) => {
@@ -613,7 +631,9 @@ export const TeacherDashboard: React.FC<{ onLogout?: () => void }> = ({ onLogout
 
                 {activeTab === 'reports' && <BatchReportsView batch={selectedBatch} batches={batches} />}
 
-                {activeTab === 'settings' && <SystemSettingsView />}
+                {activeTab === 'settings' && (
+                  <SystemSettingsView batches={batches} selectedBatch={selectedBatch} />
+                )}
               </motion.div>
             </AnimatePresence>
           </div>
@@ -760,6 +780,12 @@ export const TeacherDashboard: React.FC<{ onLogout?: () => void }> = ({ onLogout
         item={deletingLibraryItem}
         onClose={() => setDeletingLibraryItem(null)}
         onConfirm={handleDeleteLibrary}
+      />
+
+      <ExcelImportResultModal
+        isOpen={isExcelResultModalOpen}
+        onClose={() => setIsExcelResultModalOpen(false)}
+        result={excelImportResult}
       />
     </div>
   );

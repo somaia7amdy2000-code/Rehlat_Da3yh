@@ -1191,5 +1191,153 @@ $$;
 
 GRANT EXECUTE ON FUNCTION public.get_student_club_members(UUID, TEXT, UUID) TO anon, authenticated;
 
+-- ----------------------------------------------------------------------------
+-- 5.9 SECURE STUDENT LIBRARY FETCH RPC (AUDIENCE VERIFICATION)
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.get_student_library(
+  p_student_id UUID,
+  p_student_code TEXT
+)
+RETURNS TABLE (
+  id UUID,
+  batch_id UUID,
+  title TEXT,
+  description TEXT,
+  file_type TEXT,
+  file_size TEXT,
+  duration TEXT,
+  url TEXT,
+  thumbnail_url TEXT,
+  category TEXT,
+  uploaded_by TEXT,
+  target_type TEXT,
+  target_id UUID,
+  target_name TEXT,
+  created_at TIMESTAMPTZ
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_batch_id UUID;
+  v_class_id UUID;
+  v_club_id UUID;
+BEGIN
+  IF p_student_id IS NULL OR p_student_code IS NULL OR TRIM(p_student_code) = '' THEN
+    RETURN;
+  END IF;
+
+  -- 1. Verify active student matching ID and Code
+  SELECT s.batch_id, s.class_id
+  INTO v_batch_id, v_class_id
+  FROM public.students s
+  WHERE s.id = p_student_id
+    AND s.student_code = TRIM(p_student_code)
+    AND s.status = 'active';
+
+  IF v_batch_id IS NULL THEN
+    RETURN;
+  END IF;
+
+  -- 2. Fetch student club membership if any
+  SELECT cm.club_id
+  INTO v_club_id
+  FROM public.club_members cm
+  WHERE cm.student_id = p_student_id
+  LIMIT 1;
+
+  -- 3. Return only audience-targeted library items
+  RETURN QUERY
+  SELECT 
+    li.id,
+    li.batch_id,
+    li.title,
+    COALESCE(li.description, '') AS description,
+    li.file_type,
+    COALESCE(li.file_size, '') AS file_size,
+    COALESCE(li.duration, '') AS duration,
+    li.url,
+    COALESCE(li.thumbnail_url, '') AS thumbnail_url,
+    COALESCE(li.category, 'عام') AS category,
+    COALESCE(li.uploaded_by, 'المعلم') AS uploaded_by,
+    li.target_type,
+    li.target_id,
+    CASE 
+      WHEN li.target_type = 'all' THEN 'الجميع'
+      WHEN li.target_type = 'batch' THEN (SELECT b.name FROM public.batches b WHERE b.id = li.batch_id)
+      WHEN li.target_type = 'class' THEN (SELECT c.name FROM public.classes c WHERE c.id = li.target_id)
+      WHEN li.target_type = 'club' THEN (SELECT cl.name FROM public.clubs cl WHERE cl.id = li.target_id)
+      WHEN li.target_type = 'student' THEN (SELECT st.full_name FROM public.students st WHERE st.id = li.target_id)
+      ELSE 'الجميع'
+    END AS target_name,
+    li.created_at
+  FROM public.library_items li
+  WHERE 
+    li.target_type = 'all'
+    OR (li.target_type = 'batch' AND li.batch_id = v_batch_id)
+    OR (li.target_type = 'class' AND li.target_id = v_class_id)
+    OR (li.target_type = 'club' AND v_club_id IS NOT NULL AND li.target_id = v_club_id)
+    OR (li.target_type = 'student' AND li.target_id = p_student_id)
+  ORDER BY li.created_at DESC;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.get_student_library(UUID, TEXT) TO anon, authenticated;
+
+-- ============================================================================
+-- 6. PRIVATE SUPABASE STORAGE BUCKET & POLICIES (LIBRARY FILES)
+-- ============================================================================
+
+-- Create private storage bucket for library files (50MB max file size)
+INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+VALUES (
+  'library-files',
+  'library-files',
+  false,
+  52428800, -- 50 MB
+  ARRAY[
+    'application/pdf',
+    'image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/svg+xml',
+    'audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/ogg', 'audio/m4a', 'audio/aac',
+    'video/mp4', 'video/webm', 'video/quicktime',
+    'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.ms-powerpoint', 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'text/plain'
+  ]
+)
+ON CONFLICT (id) DO UPDATE SET
+  public = false,
+  file_size_limit = 52428800;
+
+-- 6.1 Storage Policies for 'library-files'
+-- Teachers (authenticated) can upload, update, delete, and view their files
+DROP POLICY IF EXISTS "Authenticated teachers can upload library files" ON storage.objects;
+CREATE POLICY "Authenticated teachers can upload library files"
+  ON storage.objects FOR INSERT
+  TO authenticated
+  WITH CHECK (bucket_id = 'library-files');
+
+DROP POLICY IF EXISTS "Authenticated teachers can update library files" ON storage.objects;
+CREATE POLICY "Authenticated teachers can update library files"
+  ON storage.objects FOR UPDATE
+  TO authenticated
+  USING (bucket_id = 'library-files');
+
+DROP POLICY IF EXISTS "Authenticated teachers can delete library files" ON storage.objects;
+CREATE POLICY "Authenticated teachers can delete library files"
+  ON storage.objects FOR DELETE
+  TO authenticated
+  USING (bucket_id = 'library-files');
+
+-- Allow authenticated users and signed url access to read from private library-files bucket
+DROP POLICY IF EXISTS "Users can read library files with valid access" ON storage.objects;
+CREATE POLICY "Users can read library files with valid access"
+  ON storage.objects FOR SELECT
+  TO authenticated, anon
+  USING (bucket_id = 'library-files');
+
+
 
 

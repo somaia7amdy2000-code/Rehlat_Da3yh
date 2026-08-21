@@ -11,10 +11,13 @@ import {
   BatchAnnouncement,
   BatchDashboardStats,
   TeacherProfile,
+  ExcelImportResult,
+  ExcelImportFailure,
 } from '../types/teacher';
 import { calculateStudentJourney } from './journeyEngine';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { toUUID } from './migrationService';
+import { getBatchStationsSync } from './systemSettingsService';
 
 const initialBatches: Batch[] = [];
 
@@ -191,6 +194,7 @@ export function computeDynamicLevelBadge(student: BatchStudent): string {
     id: student.id,
     name: student.name,
     studentCode: student.studentCode,
+    batchId: student.batchId,
     xp: currentPoints,
     points: currentPoints,
     completedChallengesCount: student.completedChallengesCount ?? 0,
@@ -981,13 +985,11 @@ export const teacherService = {
   },
 
   /**
-   * Get batch station settings synchronously
+   * Get batch station settings synchronously (from memory cache populated by Supabase)
    */
   getBatchStationsSync(batchId?: string) {
     if (!batchId) return undefined;
-    loadDbFromLocalStorage();
-    const batch = batchesStore.find((b) => b.id === batchId);
-    return batch?.stations;
+    return getBatchStationsSync(batchId);
   },
 
   /**
@@ -1647,10 +1649,11 @@ export const teacherService = {
             }
           }
 
+          const realBatchId = isUUID(batchId) ? batchId : toUUID(batchId);
           const payload = {
             id: generatedUuid,
-            batch_id: batchId,
-            class_id: classId,
+            batch_id: realBatchId,
+            class_id: classId && isUUID(classId) ? classId : null,
             student_code: studentCode || `STU-${Math.floor(100000 + Math.random() * 900000)}`,
             full_name: student.name,
             points: student.points || 0,
@@ -1669,8 +1672,7 @@ export const teacherService = {
             if (error.code === '23505' || error.message.includes('unique') || error.message.includes('student_code')) {
               throw new Error(`كود الطالبة ${studentCode || payload.student_code} مستخدم بالفعل في هذا الفصل.`);
             }
-            console.error('Failed to save student to Supabase:', error.message);
-            throw new Error(`فشل إضافة الطالب إلى قاعدة البيانات: ${error.message}`);
+            console.warn('Supabase insertion error, proceeding with local persistence:', error.message);
           } else if (inserted) {
             newStudent.id = inserted.id;
             newStudent.studentCode = inserted.student_code;
@@ -1681,8 +1683,10 @@ export const teacherService = {
           }
         }
       } catch (err: any) {
-        console.error('Unexpected error inserting student into Supabase:', err?.message || err);
-        throw err;
+        if (err.message && err.message.includes('مستخدم بالفعل')) {
+          throw err;
+        }
+        console.warn('Supabase network/fetch warning in addStudent, persisted locally:', err?.message || err);
       }
     }
 
@@ -1742,58 +1746,52 @@ export const teacherService = {
 
     // Update Supabase if configured
     if (isSupabaseConfigured) {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) {
-        const supaPayload: any = {};
-        if (typeof updates.name === 'string') supaPayload.full_name = updates.name;
-        if (typeof updates.studentCode === 'string') supaPayload.student_code = updates.studentCode;
-        if (typeof updates.avatarUrl === 'string') supaPayload.avatar_url = updates.avatarUrl;
-        if (typeof (updates as any).notes === 'string') supaPayload.notes = (updates as any).notes;
-        if (typeof updates.status === 'string') supaPayload.status = updates.status;
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const supaPayload: any = {};
+          if (typeof updates.name === 'string') supaPayload.full_name = updates.name;
+          if (typeof updates.studentCode === 'string') supaPayload.student_code = updates.studentCode;
+          if (typeof updates.avatarUrl === 'string') supaPayload.avatar_url = updates.avatarUrl;
+          if (typeof (updates as any).notes === 'string') supaPayload.notes = (updates as any).notes;
+          if (typeof updates.status === 'string') supaPayload.status = updates.status;
 
-        // Note: Do NOT include points in supaPayload! Points are updated via point_transactions trigger only.
+          // Note: Do NOT include points in supaPayload! Points are updated via point_transactions trigger only.
 
-        if (Object.keys(supaPayload).length > 0) {
-          if (!isValidUUID(studentId)) {
-            throw new Error(`معرف الطالب (${studentId}) غير صالح لقاعدة البيانات Supabase`);
-          }
-          const { error } = await supabase
-            .from('students')
-            .update(supaPayload)
-            .eq('id', studentId);
+          if (Object.keys(supaPayload).length > 0 && isValidUUID(studentId)) {
+            const { error } = await supabase
+              .from('students')
+              .update(supaPayload)
+              .eq('id', studentId);
 
-          if (error) {
-            console.error('Failed to update student in Supabase:', error.message);
-            throw new Error(`فشل تحديث بيانات الطالب في قاعدة البيانات: ${error.message}`);
-          }
-        }
-
-        // Point changes handled strictly through point_transactions
-        if (typeof updates.points === 'number') {
-          const targetPoints = Math.max(0, updates.points);
-          const delta = targetPoints - oldPoints;
-
-          if (delta !== 0) {
-            if (!isValidUUID(studentId) || !isValidUUID(targetBatchId)) {
-              throw new Error(`معرف الطالب (${studentId}) أو الدفعة (${targetBatchId}) غير صالح كـ UUID في Supabase`);
+            if (error) {
+              console.warn('Supabase update student warning:', error.message);
             }
+          }
 
-            const { error: ptError } = await supabase.from('point_transactions').insert({
-              student_id: studentId,
-              batch_id: targetBatchId,
-              points: delta,
-              reason: 'تعديل نقاط مباشر من المعلم',
-              category: 'reward'
-            });
+          // Point changes handled strictly through point_transactions
+          if (typeof updates.points === 'number') {
+            const targetPoints = Math.max(0, updates.points);
+            const delta = targetPoints - oldPoints;
 
-            if (ptError) {
-              console.error('Failed to insert point transaction in Supabase:', ptError.message);
-              throw new Error(`فشل حفظ تعديل النقاط في قاعدة البيانات: ${ptError.message}`);
+            if (delta !== 0 && isValidUUID(studentId)) {
+              const realTargetBatchId = isUUID(targetBatchId) ? targetBatchId : toUUID(targetBatchId);
+              const { error: ptError } = await supabase.from('point_transactions').insert({
+                student_id: studentId,
+                batch_id: realTargetBatchId,
+                points: delta,
+                reason: 'تعديل نقاط مباشر من المعلم',
+                category: 'reward'
+              });
+
+              if (ptError) {
+                console.warn('Supabase point_transactions warning:', ptError.message);
+              }
             }
           }
         }
-      } else {
-        console.warn('Supabase DB update skipped for student session (no active teacher user)');
+      } catch (err: any) {
+        console.warn('Supabase updateStudent network warning:', err?.message || err);
       }
     }
 
@@ -1865,42 +1863,226 @@ export const teacherService = {
   },
 
   /**
-   * Import students from parsed Excel file array (UI interface ready for backend integration)
+   * Import students from parsed Excel file array with strict Supabase insert verification & detailed error reporting
    */
   async importStudentsFromExcel(
     batchId: string,
     newStudentsData: Array<{ name: string; studentCode?: string; className: string; clubName?: string; points?: number }>
-  ): Promise<BatchStudent[]> {
-    // Check duplicates inside the imported file per class
-    const seenMap = new Set<string>();
-    for (const item of newStudentsData) {
-      const clsName = item.className || '';
-      const code = (item.studentCode || '').trim();
-      if (code && clsName) {
-        const key = `${clsName}::${code}`;
-        if (seenMap.has(key)) {
-          throw new Error(`تكرار كود الطالبة (${code}) في نفس الفصل (${clsName}) داخل ملف الإكسل.`);
+  ): Promise<ExcelImportResult> {
+    loadDbFromLocalStorage();
+
+    console.log('[Excel Import] parsed rows:', newStudentsData.length, newStudentsData);
+
+    const realBatchUuid = isUUID(batchId) ? batchId : toUUID(batchId);
+
+    // 1. Fetch real class mappings from Supabase if configured
+    const classMapByName: Record<string, string> = {};
+    if (isSupabaseConfigured) {
+      try {
+        const { data: supaClasses, error: classErr } = await supabase
+          .from('classes')
+          .select('id, name')
+          .eq('batch_id', realBatchUuid);
+        if (classErr) {
+          console.warn('[Excel Import] warning querying classes from Supabase:', classErr.message);
+        } else if (supaClasses) {
+          supaClasses.forEach((sc: any) => {
+            if (sc.name) {
+              classMapByName[sc.name.trim()] = sc.id;
+            }
+          });
         }
-        seenMap.add(key);
+      } catch (err: any) {
+        console.warn('[Excel Import] error checking classes in Supabase:', err?.message || err);
       }
     }
 
+    // 2. Also map from local classesStore as fallback
+    const localClasses = classesStore[batchId] || [];
+    localClasses.forEach((lc) => {
+      if (lc.name && !classMapByName[lc.name.trim()] && lc.id && isUUID(lc.id)) {
+        classMapByName[lc.name.trim()] = lc.id;
+      }
+    });
+
     const createdList: BatchStudent[] = [];
-    for (const item of newStudentsData) {
-      const added = await this.addStudent(batchId, {
-        name: item.name,
-        studentCode: item.studentCode,
-        className: item.className || '',
-        clubName: item.clubName || 'بدون نادي',
-        levelBadge: '🌱 البداية',
-        points: item.points || 0,
-        completedTasks: 0,
-        completedChallengesCount: 0,
-        status: 'active',
+    const failures: ExcelImportFailure[] = [];
+    let validRowsCount = 0;
+
+    for (let index = 0; index < newStudentsData.length; index++) {
+      const item = newStudentsData[index];
+      const studentName = (item.name || '').trim();
+      const studentCode = (item.studentCode || '').trim();
+      const className = (item.className || '').trim();
+
+      console.log(`[Excel Import] validating row [${index + 1}/${newStudentsData.length}]:`, {
+        name: studentName,
+        studentCode,
+        className,
       });
-      createdList.push(added);
+
+      if (!studentName) {
+        console.warn(`[Excel Import] insert failed: اسم الطالب فارغ في الصف ${index + 1}`);
+        failures.push({
+          name: `صف بدون اسم (${index + 1})`,
+          studentCode,
+          reason: 'اسم الطالب فارغ أو غير موجود في هذا الصف.',
+        });
+        continue;
+      }
+
+      validRowsCount++;
+
+      const targetClassName = className || (localClasses.length > 0 ? localClasses[0].name : 'الفصل E');
+      let targetClassId: string | null = classMapByName[targetClassName] || null;
+
+      if (targetClassId && !isUUID(targetClassId)) {
+        targetClassId = null;
+      }
+
+      console.log(`[Excel Import] inserting student [${index + 1}]:`, {
+        name: studentName,
+        studentCode: studentCode || '(توليد تلقائي)',
+        className: targetClassName,
+        classId: targetClassId,
+      });
+
+      if (isSupabaseConfigured) {
+        try {
+          const { data: authData, error: authError } = await supabase.auth.getUser();
+          if (authError || !authData?.user) {
+            console.error(`[Excel Import] insert failed for (${studentName}): لا توجد جلسة معلم نشطة في Supabase`);
+            failures.push({
+              name: studentName,
+              studentCode,
+              reason: 'لا توجد جلسة معلم مصرح لها بالحفظ في Supabase (يرجى تسجيل الدخول كمعلم).',
+            });
+            continue;
+          }
+
+          const generatedUuid = typeof crypto !== 'undefined' && crypto.randomUUID
+            ? crypto.randomUUID()
+            : `std-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+
+          const finalStudentCode = studentCode || `STU-${Math.floor(100000 + Math.random() * 900000)}`;
+
+          const payload = {
+            id: generatedUuid,
+            batch_id: realBatchUuid,
+            class_id: targetClassId,
+            student_code: finalStudentCode,
+            full_name: studentName,
+            points: item.points || 0,
+            avatar_url: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200',
+            notes: null,
+            status: 'active',
+          };
+
+          const { data: inserted, error: insertError } = await supabase
+            .from('students')
+            .insert(payload)
+            .select('*')
+            .single();
+
+          if (insertError) {
+            let reason = insertError.message;
+            if (insertError.code === '23505' || reason.includes('unique') || reason.includes('student_code')) {
+              reason = `كود الطالب (${finalStudentCode}) مكرر أو مستخدم بالفعل في قاعدة البيانات (Unique constraint violation).`;
+            } else if (insertError.code === '23503') {
+              reason = `مفتاح الربط للدفعة أو الفصل غير صالح في قاعدة البيانات (${insertError.message}).`;
+            }
+
+            console.error(`[Excel Import] insert failed for (${studentName}):`, {
+              code: insertError.code,
+              message: insertError.message,
+              details: insertError.details,
+            });
+
+            failures.push({
+              name: studentName,
+              studentCode: finalStudentCode,
+              reason,
+            });
+            continue;
+          }
+
+          if (inserted) {
+            console.log(`[Excel Import] insert success for (${studentName}):`, {
+              id: inserted.id,
+              student_code: inserted.student_code,
+            });
+
+            const newStudent: BatchStudent = {
+              id: inserted.id,
+              batchId,
+              name: inserted.full_name,
+              studentCode: inserted.student_code,
+              className: targetClassName,
+              classId: inserted.class_id || undefined,
+              clubName: item.clubName || 'بدون نادي',
+              levelBadge: '🌱 البداية',
+              points: inserted.points || 0,
+              completedTasks: 0,
+              completedChallengesCount: 0,
+              attendanceRate: 0,
+              avatarUrl: inserted.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200',
+              status: (inserted.status as any) || 'active',
+            };
+
+            createdList.push(newStudent);
+            if (!studentsStore[batchId]) studentsStore[batchId] = [];
+            studentsStore[batchId].push(newStudent);
+          }
+        } catch (err: any) {
+          console.error(`[Excel Import] insert failed with unexpected error for (${studentName}):`, err?.message || err);
+          failures.push({
+            name: studentName,
+            studentCode,
+            reason: `فشل الاتصال بـ Supabase: ${err?.message || 'خطأ شبكة غير متوقع'}`,
+          });
+          continue;
+        }
+      } else {
+        failures.push({
+          name: studentName,
+          studentCode,
+          reason: 'قاعدة بيانات Supabase غير متصلة في البيئة الحالية.',
+        });
+      }
     }
-    return createdList;
+
+    // Sync counts and class members
+    const batch = batchesStore.find((b) => b.id === batchId);
+    if (batch && studentsStore[batchId]) {
+      batch.studentCount = studentsStore[batchId].length;
+    }
+
+    const classes = classesStore[batchId] || [];
+    classes.forEach((cls) => {
+      cls.studentNames = (studentsStore[batchId] || [])
+        .filter((s) => s.className === cls.name)
+        .map((s) => s.name);
+      cls.studentCount = cls.studentNames.length;
+    });
+
+    saveDbToLocalStorage();
+
+    console.log('[Excel Import] final summary:', {
+      totalRows: newStudentsData.length,
+      validRows: validRowsCount,
+      savedInSupabase: createdList.length,
+      failedCount: failures.length,
+      failures,
+    });
+
+    return {
+      totalRows: newStudentsData.length,
+      validRows: validRowsCount,
+      savedInSupabase: createdList.length,
+      failedCount: failures.length,
+      successfulStudents: createdList,
+      failures,
+    };
   },
 
   /**
@@ -2704,6 +2886,8 @@ export const teacherService = {
    * Fetch library items targeted specifically for a student based on real relationships (Batch, Club, Student ID)
    */
   async getLibraryForStudent(query: StudentLibraryQuery): Promise<BatchLibraryItem[]> {
+    let rawItems: BatchLibraryItem[] = [];
+
     if (isSupabaseConfigured) {
       try {
         // 1. Try secure student library RPC first if student credentials available
@@ -2713,7 +2897,7 @@ export const teacherService = {
             p_student_code: query.studentCode,
           });
           if (!rpcErr && rpcData && Array.isArray(rpcData)) {
-            return rpcData.map((sl: any) => ({
+            rawItems = rpcData.map((sl: any) => ({
               id: sl.id,
               batchId: sl.batch_id,
               title: sl.title,
@@ -2736,56 +2920,182 @@ export const teacherService = {
         }
 
         // 2. Direct Supabase query fallback (with strict client filtering)
-        const { data: supaLib, error: supaErr } = await supabase
-          .from('library_items')
-          .select('*')
-          .order('created_at', { ascending: false });
+        if (rawItems.length === 0) {
+          const { data: supaLib, error: supaErr } = await supabase
+            .from('library_items')
+            .select('*')
+            .order('created_at', { ascending: false });
 
-        if (!supaErr && supaLib && supaLib.length > 0) {
-          const mapped: BatchLibraryItem[] = supaLib.map((sl: any) => ({
-            id: sl.id,
-            batchId: sl.batch_id,
-            title: sl.title,
-            description: sl.description || '',
-            fileType: sl.file_type || 'pdf',
-            type: sl.file_type || 'pdf',
-            fileSize: sl.file_size || '1 MB',
-            duration: sl.duration || undefined,
-            url: sl.url,
-            thumbnailUrl: sl.thumbnail_url || undefined,
-            category: sl.category || 'عام',
-            uploadedBy: sl.uploaded_by || 'المعلم',
-            targetType: sl.target_type || 'all',
-            targetId: sl.target_id || undefined,
-            targetName: sl.target_type === 'all' ? 'الجميع' : undefined,
-            createdAt: sl.created_at,
-            uploadedAt: (sl.created_at || '').split('T')[0] || new Date().toISOString().split('T')[0],
-          }));
+          if (!supaErr && supaLib && supaLib.length > 0) {
+            const mapped: BatchLibraryItem[] = supaLib.map((sl: any) => ({
+              id: sl.id,
+              batchId: sl.batch_id,
+              title: sl.title,
+              description: sl.description || '',
+              fileType: sl.file_type || 'pdf',
+              type: sl.file_type || 'pdf',
+              fileSize: sl.file_size || '1 MB',
+              duration: sl.duration || undefined,
+              url: sl.url,
+              thumbnailUrl: sl.thumbnail_url || undefined,
+              category: sl.category || 'عام',
+              uploadedBy: sl.uploaded_by || 'المعلم',
+              targetType: sl.target_type || 'all',
+              targetId: sl.target_id || undefined,
+              targetName: sl.target_type === 'all' ? 'الجميع' : undefined,
+              createdAt: sl.created_at,
+              uploadedAt: (sl.created_at || '').split('T')[0] || new Date().toISOString().split('T')[0],
+            }));
 
-          return this.filterLibraryItemsForStudent(mapped, query);
+            rawItems = this.filterLibraryItemsForStudent(mapped, query);
+          }
         }
       } catch (err) {
         console.warn('Supabase getLibraryForStudent error:', err);
       }
     }
 
-    loadDbFromLocalStorage();
-    const itemsMap = new Map<string, BatchLibraryItem>();
+    if (rawItems.length === 0) {
+      loadDbFromLocalStorage();
+      const itemsMap = new Map<string, BatchLibraryItem>();
 
-    // Collect ALL items across all batches
-    Object.keys(libraryStore).forEach((key) => {
-      (libraryStore[key] || []).forEach((item) => {
-        itemsMap.set(item.id, item);
+      // Collect ALL items across all batches
+      Object.keys(libraryStore).forEach((key) => {
+        (libraryStore[key] || []).forEach((item) => {
+          itemsMap.set(item.id, item);
+        });
       });
-    });
 
-    return this.filterLibraryItemsForStudent(Array.from(itemsMap.values()), query);
+      rawItems = this.filterLibraryItemsForStudent(Array.from(itemsMap.values()), query);
+    }
+
+    // 3. Resolve Signed URLs for private storage files
+    const resolvedItems = await Promise.all(
+      rawItems.map(async (item) => {
+        try {
+          const signedUrl = await this.resolveMediaSignedUrl(item.url);
+          const signedThumb = item.thumbnailUrl
+            ? await this.resolveMediaSignedUrl(item.thumbnailUrl)
+            : undefined;
+          return {
+            ...item,
+            url: signedUrl || item.url,
+            thumbnailUrl: signedThumb || item.thumbnailUrl,
+          };
+        } catch {
+          return item;
+        }
+      })
+    );
+
+    return resolvedItems;
+  },
+
+  /**
+   * Upload a physical file directly to private Supabase Storage bucket 'library-files'
+   */
+  async uploadFileToSupabaseStorage(
+    batchId: string,
+    file: File
+  ): Promise<{ storagePath: string; storageUrl: string; fileSize: string }> {
+    // 1. Validation: 50MB max limit
+    const MAX_SIZE_BYTES = 50 * 1024 * 1024;
+    if (file.size > MAX_SIZE_BYTES) {
+      throw new Error(`حجم الملف (${(file.size / (1024 * 1024)).toFixed(1)} MB) يتجاوز الحد الأقصى المسموح به (50 ميجابايت).`);
+    }
+
+    // Format human-readable size
+    let formattedSize = '1 MB';
+    if (file.size < 1024 * 1024) {
+      formattedSize = `${Math.round(file.size / 1024)} KB`;
+    } else {
+      formattedSize = `${(file.size / (1024 * 1024)).toFixed(1)} MB`;
+    }
+
+    if (!isSupabaseConfigured) {
+      const localPath = `local-files/${Date.now()}_${file.name}`;
+      return {
+        storagePath: localPath,
+        storageUrl: URL.createObjectURL(file),
+        fileSize: formattedSize,
+      };
+    }
+
+    // 2. Sanitize filename and generate unique collision-free path
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const uniqueSuffix = `${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const storagePath = `${batchId}/${uniqueSuffix}_${safeName}`;
+
+    // 3. Upload to private bucket 'library-files'
+    const { data: uploadData, error: uploadError } = await supabase.storage
+      .from('library-files')
+      .upload(storagePath, file, {
+        cacheControl: '3600',
+        upsert: false,
+      });
+
+    if (uploadError || !uploadData) {
+      console.error('Supabase Storage Upload Error:', uploadError);
+      throw new Error(`فشل رفع الملف إلى التخزين السحابي: ${uploadError?.message || 'خطأ غير معروف'}`);
+    }
+
+    return {
+      storagePath,
+      storageUrl: `storage://library-files/${storagePath}`,
+      fileSize: formattedSize,
+    };
+  },
+
+  /**
+   * Resolve a temporary Signed URL for private storage files or return external URLs directly
+   */
+  async resolveMediaSignedUrl(rawUrl?: string, expiresInSeconds: number = 3600): Promise<string> {
+    if (!rawUrl || rawUrl === '#' || rawUrl.trim() === '') {
+      return '';
+    }
+
+    // 1. If it's a standard external web link (e.g. YouTube, Quran.com, external PDF), return as is
+    if (rawUrl.startsWith('http://') || rawUrl.startsWith('https://') || rawUrl.startsWith('blob:')) {
+      return rawUrl;
+    }
+
+    // 2. Check for private storage scheme (storage://library-files/<path> or library-files/<path>)
+    let storagePath = '';
+    if (rawUrl.startsWith('storage://library-files/')) {
+      storagePath = rawUrl.replace('storage://library-files/', '');
+    } else if (rawUrl.startsWith('library-files/')) {
+      storagePath = rawUrl.replace('library-files/', '');
+    } else if (!rawUrl.includes('://')) {
+      storagePath = rawUrl;
+    }
+
+    if (storagePath && isSupabaseConfigured) {
+      try {
+        const { data, error } = await supabase.storage
+          .from('library-files')
+          .createSignedUrl(storagePath, expiresInSeconds);
+
+        if (!error && data?.signedUrl) {
+          return data.signedUrl;
+        }
+        if (error) {
+          console.warn('Failed to create signed URL for path:', storagePath, error.message);
+        }
+      } catch (err) {
+        console.warn('Error resolving signed URL:', err);
+      }
+    }
+
+    return rawUrl;
   },
 
   /**
    * Upload/add a library file to batch
    */
-  async uploadLibraryFile(batchId: string, file: Omit<BatchLibraryItem, 'id' | 'batchId' | 'uploadedAt'>): Promise<BatchLibraryItem> {
+  async uploadLibraryFile(
+    batchId: string, 
+    file: Omit<BatchLibraryItem, 'id' | 'batchId' | 'uploadedAt'> & { fileObject?: File }
+  ): Promise<BatchLibraryItem> {
     loadDbFromLocalStorage();
     let newLibId = `lib-${Date.now()}`;
     const fileType = file.fileType || file.type || 'pdf';
@@ -2798,6 +3108,19 @@ export const teacherService = {
       targetId = file.targetId || null;
     }
 
+    let finalUrl = file.url || '#';
+    let calculatedFileSize = file.fileSize || '1 MB';
+    let uploadedStoragePath: string | null = null;
+
+    // 1. If a physical file was provided, upload to Supabase Storage first
+    if (file.fileObject) {
+      const storageResult = await this.uploadFileToSupabaseStorage(batchId, file.fileObject);
+      finalUrl = storageResult.storageUrl;
+      calculatedFileSize = storageResult.fileSize;
+      uploadedStoragePath = storageResult.storagePath;
+    }
+
+    // 2. Insert metadata into library_items table
     if (isSupabaseConfigured) {
       try {
         const { data, error } = await supabase.from('library_items').insert({
@@ -2805,33 +3128,50 @@ export const teacherService = {
           title: file.title,
           description: file.description || '',
           file_type: fileType,
-          file_size: file.fileSize || '1 MB',
+          file_size: calculatedFileSize,
           duration: file.duration || null,
-          url: file.url || '#',
+          url: finalUrl,
           thumbnail_url: file.thumbnailUrl || null,
           category: file.category || 'عام',
           uploaded_by: file.uploadedBy || 'المعلم',
           target_type: targetType,
           target_id: targetId,
         }).select().single();
-        if (!error && data) {
-          newLibId = data.id;
-        } else if (error) {
-          console.warn('Supabase uploadLibraryFile error:', error.message);
+
+        if (error) {
+          console.error('Supabase uploadLibraryFile DB insert error:', error.message);
+          // Rollback: cleanup uploaded storage file to prevent orphaned files
+          if (uploadedStoragePath) {
+            await supabase.storage.from('library-files').remove([uploadedStoragePath]).catch((cleanupErr) => {
+              console.warn('Failed to cleanup orphaned storage file:', cleanupErr);
+            });
+          }
+          throw new Error(`فشل حفظ بيانات المورد في قاعدة البيانات: ${error.message}`);
         }
-      } catch (err) {
-        console.warn('Supabase uploadLibraryFile error:', err);
+
+        if (data) {
+          newLibId = data.id;
+        }
+      } catch (err: any) {
+        if (uploadedStoragePath && !err.message?.includes('فشل حفظ بيانات المورد')) {
+          await supabase.storage.from('library-files').remove([uploadedStoragePath]).catch(() => {});
+        }
+        throw err;
       }
     }
+
     const newItem: BatchLibraryItem = {
       ...file,
       fileType: fileType as any,
       type: fileType,
+      fileSize: calculatedFileSize,
+      url: finalUrl,
       id: newLibId,
       batchId,
       targetType,
       targetId: targetId || undefined,
       uploadedAt: new Date().toISOString().split('T')[0],
+      storagePath: uploadedStoragePath || undefined,
     };
     if (!libraryStore[batchId]) libraryStore[batchId] = [];
     libraryStore[batchId].unshift(newItem);
@@ -4041,6 +4381,28 @@ export const teacherService = {
   async deleteLibraryFile(batchId: string, itemId: string): Promise<boolean> {
     if (isSupabaseConfigured) {
       try {
+        // 1. Fetch item URL to check if a private storage file exists
+        const { data: itemData } = await supabase
+          .from('library_items')
+          .select('url')
+          .eq('id', itemId)
+          .single();
+
+        if (itemData?.url) {
+          let storagePath = '';
+          if (itemData.url.startsWith('storage://library-files/')) {
+            storagePath = itemData.url.replace('storage://library-files/', '');
+          } else if (itemData.url.startsWith('library-files/')) {
+            storagePath = itemData.url.replace('library-files/', '');
+          }
+          if (storagePath) {
+            await supabase.storage.from('library-files').remove([storagePath]).catch((storageErr) => {
+              console.warn('Supabase storage cleanup warning on delete:', storageErr);
+            });
+          }
+        }
+
+        // 2. Delete database record
         const { error } = await supabase.from('library_items').delete().eq('id', itemId);
         if (error) {
           console.warn('Supabase deleteLibraryFile error:', error.message);

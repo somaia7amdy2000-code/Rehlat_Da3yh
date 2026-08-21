@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   BookOpen,
@@ -19,8 +19,10 @@ import {
   X,
   Play,
   Download,
+  Loader2,
 } from 'lucide-react';
 import { BatchLibraryItem, Batch } from '../../types/teacher';
+import { teacherService } from '../../services/teacherService';
 
 interface BatchLibraryViewProps {
   batch: Batch;
@@ -38,6 +40,32 @@ export const BatchLibraryView: React.FC<BatchLibraryViewProps> = ({
   onOpenDeleteLibrary,
 }) => {
   const [previewItem, setPreviewItem] = useState<BatchLibraryItem | null>(null);
+  const [resolvedPreviewUrl, setResolvedPreviewUrl] = useState<string>('');
+  const [isLoadingUrl, setIsLoadingUrl] = useState<boolean>(false);
+
+  useEffect(() => {
+    let isCancelled = false;
+    if (previewItem && previewItem.url) {
+      setIsLoadingUrl(true);
+      teacherService.resolveMediaSignedUrl(previewItem.url).then((url) => {
+        if (!isCancelled) {
+          setResolvedPreviewUrl(url || previewItem.url);
+          setIsLoadingUrl(false);
+        }
+      }).catch(() => {
+        if (!isCancelled) {
+          setResolvedPreviewUrl(previewItem.url);
+          setIsLoadingUrl(false);
+        }
+      });
+    } else {
+      setResolvedPreviewUrl('');
+      setIsLoadingUrl(false);
+    }
+    return () => {
+      isCancelled = true;
+    };
+  }, [previewItem]);
 
   const renderFileIcon = (fileType: BatchLibraryItem['fileType']) => {
     switch (fileType) {
@@ -239,12 +267,17 @@ export const BatchLibraryView: React.FC<BatchLibraryViewProps> = ({
 
               {/* Media Content Preview */}
               <div className="rounded-2xl overflow-hidden bg-slate-950 border border-slate-800 p-2 min-h-[220px] flex items-center justify-center relative">
-                {previewItem.fileType === 'video' ? (
+                {isLoadingUrl ? (
+                  <div className="flex flex-col items-center justify-center p-8 space-y-3 text-teal-400">
+                    <Loader2 className="w-8 h-8 animate-spin" />
+                    <p className="text-xs font-bold text-slate-400">جاري تجهيز الرابط الآمن للمعاينة...</p>
+                  </div>
+                ) : previewItem.fileType === 'video' ? (
                   <iframe
                     src={
-                      previewItem.url && previewItem.url.includes('youtube')
-                        ? previewItem.url.replace('watch?v=', 'embed/')
-                        : previewItem.url || 'https://www.youtube.com/embed/dQw4w9WgXcQ'
+                      resolvedPreviewUrl && resolvedPreviewUrl.includes('youtube')
+                        ? resolvedPreviewUrl.replace('watch?v=', 'embed/')
+                        : resolvedPreviewUrl || 'https://www.youtube.com/embed/dQw4w9WgXcQ'
                     }
                     title={previewItem.title}
                     className="w-full h-64 rounded-xl border-0"
@@ -255,8 +288,8 @@ export const BatchLibraryView: React.FC<BatchLibraryViewProps> = ({
                     <div className="w-16 h-16 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center mx-auto border border-amber-500/30">
                       <Music className="w-8 h-8" />
                     </div>
-                    {previewItem.url ? (
-                      <audio controls className="w-full mt-2" src={previewItem.url}>
+                    {resolvedPreviewUrl ? (
+                      <audio controls className="w-full mt-2" src={resolvedPreviewUrl}>
                         متصفحك لا يدعم مشغل الصوتيات
                       </audio>
                     ) : (
@@ -265,7 +298,7 @@ export const BatchLibraryView: React.FC<BatchLibraryViewProps> = ({
                   </div>
                 ) : previewItem.fileType === 'image' ? (
                   <img
-                    src={previewItem.url || previewItem.thumbnailUrl || 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&q=80&w=800'}
+                    src={resolvedPreviewUrl || previewItem.thumbnailUrl || 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&q=80&w=800'}
                     alt={previewItem.title}
                     className="max-h-80 object-contain rounded-xl mx-auto"
                   />
@@ -278,10 +311,10 @@ export const BatchLibraryView: React.FC<BatchLibraryViewProps> = ({
                       {previewItem.description || 'مستند تعليمي إلكتروني متاح للتحميل والقراءة المباشرة.'}
                     </p>
                     <a
-                      href={previewItem.url || '#'}
+                      href={resolvedPreviewUrl || '#'}
                       target="_blank"
                       rel="noreferrer"
-                      className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-black text-xs shadow-lg transition-all"
+                      className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-500 text-white font-black text-xs shadow-lg transition-all cursor-pointer"
                     >
                       <Download className="w-4 h-4" />
                       <span>فتح الملف المباشر / تحميل</span>

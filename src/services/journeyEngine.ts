@@ -1,5 +1,5 @@
 import { YouthLevel } from '../components/YouthMainApp';
-import { getSystemSettings, JourneyStationSetting } from './systemSettingsService';
+import { getSystemSettings, getBatchStationsSync, JourneyStationSetting } from './systemSettingsService';
 import { teacherService } from './teacherService';
 
 export interface StudentJourneyMetrics {
@@ -60,7 +60,7 @@ export function calculateStudentJourney(
   let configuredStations = customStations;
   if (!configuredStations && metrics.batchId) {
     try {
-      configuredStations = teacherService.getBatchStationsSync(metrics.batchId);
+      configuredStations = getBatchStationsSync(metrics.batchId);
     } catch (e) {
       // Fallback to system settings
     }

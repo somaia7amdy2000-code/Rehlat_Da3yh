@@ -24,9 +24,14 @@ import {
   Layers,
   Building,
   AlertTriangle,
+  AlertCircle,
   ArrowRightLeft,
   Users,
   BookOpen,
+  UploadCloud,
+  Link as LinkIcon,
+  Loader2,
+  File as FileIcon,
 } from 'lucide-react';
 import {
   PendingSubmission,
@@ -36,6 +41,8 @@ import {
   BatchClub,
   BatchChallenge,
   BatchLibraryItem,
+  ExcelImportResult,
+  ExcelImportFailure,
 } from '../../types/teacher';
 import { calculateStudentJourney } from '../../services/journeyEngine';
 
@@ -63,15 +70,17 @@ export const AddStudentModal: React.FC<AddStudentModalProps> = ({
   // Manual Form States
   const [name, setName] = useState('');
   const [studentCode, setStudentCode] = useState('');
-  const [className, setClassName] = useState(classesList[0] || 'الفصل E');
+  const [className, setClassName] = useState('');
   const [clubName, setClubName] = useState('بدون نادي');
   const [levelBadge, setLevelBadge] = useState('🌱 البداية');
 
   // Excel Import States
   const [fileName, setFileName] = useState<string | null>(null);
-  const [previewRows, setPreviewRows] = useState<
-    Array<{ name: string; studentCode: string; className: string; clubName: string; points: number }>
+  const [selectedImportClass, setSelectedImportClass] = useState<string>('');
+  const [parsedStudents, setParsedStudents] = useState<
+    Array<{ name: string; studentCode: string; clubName?: string; points?: number }>
   >([]);
+  const [excelError, setExcelError] = useState<string | null>(null);
 
   const wasOpenRef = useRef(false);
 
@@ -80,43 +89,50 @@ export const AddStudentModal: React.FC<AddStudentModalProps> = ({
     if (isOpen && !wasOpenRef.current) {
       setImportMethod(initialMode);
       setFileName(null);
+      setParsedStudents([]);
+      setSelectedImportClass('');
+      setExcelError(null);
       setName('');
       setStudentCode('');
-
-      const defaultClass1 = classesList[0] || 'الفصل E';
-      const defaultClass2 = classesList[1] || defaultClass1;
-      const defaultClass3 = classesList[2] || defaultClass2;
-
-      setPreviewRows([
-        { name: 'مريم خليل الزهراني', studentCode: '1', className: defaultClass1, clubName: 'بدون نادي', points: 0 },
-        { name: 'هند سليمان المطيري', studentCode: '2', className: defaultClass1, clubName: 'بدون نادي', points: 0 },
-        { name: 'ندى عبد الرحمن القحطاني', studentCode: '1', className: defaultClass2, clubName: 'بدون نادي', points: 0 },
-        { name: 'أبرار محمد العتيبي', studentCode: '1', className: defaultClass3, clubName: 'بدون نادي', points: 0 },
-      ]);
-
-      if (classesList.length > 0 && (!className || !classesList.includes(className))) {
-        setClassName(classesList[0]);
-      }
+      setClassName(classesList[0] || '');
+      setClubName('بدون نادي');
     }
     wasOpenRef.current = isOpen;
   }, [isOpen, initialMode]);
 
   if (!isOpen) return null;
 
-  // Validation: Check if all class names in Excel preview exist in current batch's classesList
-  const uniqueExcelClasses: string[] = Array.from(new Set(previewRows.map((r) => r.className.trim())));
-  const missingClasses: string[] = uniqueExcelClasses.filter(
-    (cName: string) => cName && !classesList.some((existing) => existing.trim() === cName.trim())
-  );
-  const hasClassError = missingClasses.length > 0;
+  // Validation: Duplicate codes within the uploaded Excel file
+  const codeCounts: Record<string, number> = {};
+  const duplicateCodes: string[] = [];
+  parsedStudents.forEach((st) => {
+    const code = (st.studentCode || '').trim();
+    if (code) {
+      codeCounts[code] = (codeCounts[code] || 0) + 1;
+      if (codeCounts[code] === 2) {
+        duplicateCodes.push(code);
+      }
+    }
+  });
+
+  const emptyNameRowsCount = parsedStudents.filter((st) => !st.name.trim()).length;
+  const hasDuplicateCodes = duplicateCodes.length > 0;
+  const isClassSelected = Boolean(selectedImportClass && classesList.includes(selectedImportClass));
+
+  const canConfirmImport =
+    parsedStudents.length > 0 &&
+    isClassSelected &&
+    emptyNameRowsCount === 0 &&
+    !hasDuplicateCodes;
 
   const handleManualSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
+    const targetClass = className || classesList[0] || 'الفصل E';
     onSubmit({
       name: name.trim(),
       studentCode: studentCode.trim(),
-      className,
+      className: targetClass,
       clubName,
       levelBadge,
     });
@@ -126,93 +142,180 @@ export const AddStudentModal: React.FC<AddStudentModalProps> = ({
   };
 
   const handleConfirmExcelImport = () => {
-    if (hasClassError) return;
+    if (!canConfirmImport) return;
+
+    parsedStudents.forEach((row, idx) => {
+      console.log(`[Excel Import] validating row [${idx + 1}/${parsedStudents.length}]:`, row);
+    });
+
+    const payload = parsedStudents.map((row) => ({
+      name: row.name.trim(),
+      studentCode: row.studentCode.trim(),
+      className: selectedImportClass,
+      clubName: row.clubName || 'بدون نادي',
+      points: row.points || 0,
+      levelBadge: '🌱 البداية',
+    }));
+
     if (onImportExcel) {
-      onImportExcel(previewRows);
+      onImportExcel(payload);
     } else {
-      previewRows.forEach((row) => {
-        onSubmit({
-          name: row.name,
-          studentCode: row.studentCode,
-          className: row.className,
-          clubName: row.clubName,
-          levelBadge: '🌱 البداية',
-        });
+      payload.forEach((st) => {
+        onSubmit(st);
       });
     }
     onClose();
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      setFileName(file.name);
+    if (!e.target.files || !e.target.files[0]) return;
+    const file = e.target.files[0];
+    setFileName(file.name);
+    setExcelError(null);
 
-      try {
-        const buffer = await file.arrayBuffer();
-        const workbook = XLSX.read(buffer, { type: 'array' });
-        const firstSheetName = workbook.SheetNames[0];
-        if (!firstSheetName) return;
-
-        const worksheet = workbook.Sheets[firstSheetName];
-        const rawData: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
-
-        if (rawData && rawData.length > 0) {
-          // Find header row or column mapping
-          const firstRow = rawData[0].map((cell: any) => String(cell || '').trim().toLowerCase());
-
-          let nameIdx = -1;
-          let codeIdx = -1;
-          let classIdx = -1;
-          let clubIdx = -1;
-          let pointsIdx = -1;
-
-          firstRow.forEach((col: string, idx: number) => {
-            if (col.includes('اسم') || col.includes('name') || col.includes('طالب')) nameIdx = idx;
-            else if (col.includes('كود') || col.includes('رقم') || col.includes('code') || col.includes('id')) codeIdx = idx;
-            else if (col.includes('فصل') || col.includes('class') || col.includes('صف')) classIdx = idx;
-            else if (col.includes('نادي') || col.includes('club')) clubIdx = idx;
-            else if (col.includes('نقط') || col.includes('نقاط') || col.includes('point') || col.includes('xp')) pointsIdx = idx;
-          });
-
-          const hasHeaderWords = firstRow.some((c: string) =>
-            c.includes('اسم') || c.includes('name') || c.includes('طالب') || c.includes('فصل') || c.includes('كود')
-          );
-
-          if (nameIdx === -1) nameIdx = 0;
-          if (codeIdx === -1) codeIdx = 1;
-          if (classIdx === -1) classIdx = 2;
-          if (clubIdx === -1) clubIdx = 3;
-          if (pointsIdx === -1) pointsIdx = 4;
-
-          const dataRows = hasHeaderWords ? rawData.slice(1) : rawData;
-          const defaultFallbackClass = classesList[0] || 'الفصل E';
-
-          const parsed = dataRows
-            .filter((row: any[]) => row && row.some((cell: any) => String(cell || '').trim().length > 0))
-            .map((row: any[], idx: number) => {
-              const rawName = String(row[nameIdx] ?? '').trim();
-              const rawCode = String(row[codeIdx] ?? '').trim();
-              const rawClass = String(row[classIdx] ?? '').trim();
-              const rawClub = String(row[clubIdx] ?? '').trim();
-              const rawPoints = Number(row[pointsIdx]) || 0;
-
-              return {
-                name: rawName || `طالب ${idx + 1}`,
-                studentCode: rawCode || `${idx + 1}`,
-                className: rawClass || defaultFallbackClass,
-                clubName: rawClub || 'بدون نادي',
-                points: rawPoints,
-              };
-            });
-
-          if (parsed.length > 0) {
-            setPreviewRows(parsed);
-          }
-        }
-      } catch (err) {
-        console.error('Error reading excel/csv file:', err);
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: 'array' });
+      const firstSheetName = workbook.SheetNames[0];
+      if (!firstSheetName) {
+        setExcelError('ملف الإكسل فارغ ولا يحتوي على أوراق عمل.');
+        setParsedStudents([]);
+        return;
       }
+
+      const worksheet = workbook.Sheets[firstSheetName];
+      const rawData: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
+
+      if (!rawData || rawData.length === 0) {
+        setExcelError('ملف الإكسل فارغ تمامًا.');
+        setParsedStudents([]);
+        return;
+      }
+
+      // Normalization helper for header matching
+      const normalizeHeader = (val: any) => {
+        return String(val || '')
+          .trim()
+          .toLowerCase()
+          .replace(/[\u064B-\u065F\u0670]/g, '') // remove arabic diacritics
+          .replace(/[أإآء]/g, 'ا')
+          .replace(/ة/g, 'ه')
+          .replace(/ى/g, 'ي')
+          .replace(/[^a-z0-9\u0600-\u06FF]/gi, ''); // remove spaces and punctuation
+      };
+
+      const firstRow = rawData[0];
+      let nameIdx = -1;
+      let codeIdx = -1;
+      let clubIdx = -1;
+      let pointsIdx = -1;
+
+      firstRow.forEach((cellVal: any, idx: number) => {
+        const norm = normalizeHeader(cellVal);
+        if (!norm) return;
+
+        // 1. Code / ID check FIRST to prevent 'طالب' in 'كود الطالب' from matching as name
+        const isCodeCol =
+          norm.includes('كود') ||
+          norm.includes('code') ||
+          norm.includes('رقمالطالب') ||
+          norm.includes('رقمالطالبه') ||
+          norm.includes('رقمالقيد') ||
+          norm.includes('رقمالهويه') ||
+          norm.includes('رقماكاديمي') ||
+          norm.includes('studentcode') ||
+          norm.includes('studentid') ||
+          (norm.includes('رقم') && !norm.includes('اسم') && !norm.includes('فصل')) ||
+          norm === 'id';
+
+        if (isCodeCol) {
+          codeIdx = idx;
+          return;
+        }
+
+        // 2. Name check
+        const isNameCol =
+          norm.includes('اسمالطالب') ||
+          norm.includes('اسمالطالبه') ||
+          norm.includes('studentname') ||
+          norm.includes('fullname') ||
+          norm.includes('اسم') ||
+          norm.includes('name') ||
+          (norm.includes('طالب') && !norm.includes('كود') && !norm.includes('رقم'));
+
+        if (isNameCol && nameIdx === -1) {
+          nameIdx = idx;
+          return;
+        }
+
+        // 3. Club check
+        if ((norm.includes('نادي') || norm.includes('club')) && clubIdx === -1) {
+          clubIdx = idx;
+          return;
+        }
+
+        // 4. Points check
+        if (
+          (norm.includes('نقط') || norm.includes('نقاط') || norm.includes('point') || norm.includes('xp') || norm.includes('درج')) &&
+          pointsIdx === -1
+        ) {
+          pointsIdx = idx;
+          return;
+        }
+      });
+
+      const hasHeaderWords = firstRow.some((c: any) => {
+        const n = normalizeHeader(c);
+        return (
+          n.includes('اسم') ||
+          n.includes('name') ||
+          n.includes('طالب') ||
+          n.includes('كود') ||
+          n.includes('code') ||
+          n.includes('رقم')
+        );
+      });
+
+      // Fallbacks if headers were not explicitly recognized
+      if (nameIdx === -1 && codeIdx === -1) {
+        nameIdx = 0;
+        codeIdx = firstRow.length > 1 ? 1 : -1;
+      } else if (nameIdx === -1) {
+        nameIdx = codeIdx === 0 ? 1 : 0;
+      } else if (codeIdx === -1 && firstRow.length > 1) {
+        codeIdx = nameIdx === 0 ? 1 : 0;
+      }
+
+      const dataRows = hasHeaderWords ? rawData.slice(1) : rawData;
+
+      const parsed = dataRows
+        .filter((row: any[]) => row && row.some((cell: any) => String(cell || '').trim().length > 0))
+        .map((row: any[]) => {
+          const rawName = String(row[nameIdx] ?? '').trim();
+          const rawCode = codeIdx !== -1 ? String(row[codeIdx] ?? '').trim() : '';
+          const rawClub = clubIdx !== -1 ? String(row[clubIdx] ?? '').trim() : 'بدون نادي';
+          const rawPoints = pointsIdx !== -1 ? Number(row[pointsIdx]) || 0 : 0;
+
+          return {
+            name: rawName,
+            studentCode: rawCode,
+            clubName: rawClub || 'بدون نادي',
+            points: rawPoints,
+          };
+        });
+
+      console.log('[Excel Import] parsed rows:', parsed.length, parsed);
+
+      if (parsed.length === 0) {
+        setExcelError('لم يتم العثور على صفوف بيانات صالحة داخل ملف الإكسل.');
+        setParsedStudents([]);
+      } else {
+        setParsedStudents(parsed);
+      }
+    } catch (err: any) {
+      console.error('Error reading excel file:', err);
+      setExcelError(`حدث خطأ أثناء قراءة ملف الإكسل: ${err?.message || 'تأكد من سلامة صيغة الملف'}`);
+      setParsedStudents([]);
     }
   };
 
@@ -223,17 +326,17 @@ export const AddStudentModal: React.FC<AddStudentModalProps> = ({
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
           exit={{ opacity: 0, scale: 0.95 }}
-          className="w-full max-w-2xl bg-white rounded-[32px] p-6 sm:p-7 shadow-2xl border border-slate-100 space-y-5"
+          className="w-full max-w-2xl bg-white rounded-[32px] p-6 sm:p-7 shadow-2xl border border-slate-100 space-y-5 max-h-[92vh] flex flex-col"
         >
           {/* Header */}
-          <div className="flex items-center justify-between border-b border-slate-100 pb-4">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-4 shrink-0">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-2xl bg-teal-50 text-teal-700 flex items-center justify-center font-bold border border-teal-100/80">
                 <UserPlus className="w-5 h-5" />
               </div>
               <div>
                 <h3 className="font-black text-lg text-slate-900">إضافة واستيراد طلاب الدفعة</h3>
-                <p className="text-xs text-slate-500 font-bold">إضافة الطلاب وتوزيعهم تلقائيًا على فصول الدفعة المتاحة</p>
+                <p className="text-xs text-slate-500 font-bold">إضافة الطلاب أو استيرادهم من ملف Excel إلى فصول الدفعة</p>
               </div>
             </div>
             <button onClick={onClose} className="p-1 rounded-xl hover:bg-slate-100 text-slate-400 transition-colors">
@@ -242,7 +345,7 @@ export const AddStudentModal: React.FC<AddStudentModalProps> = ({
           </div>
 
           {/* Method Choice Tabs */}
-          <div className="grid grid-cols-2 gap-2 p-1.5 bg-slate-100/80 rounded-2xl border border-slate-200/80 text-xs font-black">
+          <div className="grid grid-cols-2 gap-2 p-1.5 bg-slate-100/80 rounded-2xl border border-slate-200/80 text-xs font-black shrink-0">
             <button
               type="button"
               onClick={() => setImportMethod('excel')}
@@ -272,7 +375,7 @@ export const AddStudentModal: React.FC<AddStudentModalProps> = ({
 
           {/* TAB 1: EXCEL IMPORT */}
           {importMethod === 'excel' && (
-            <div className="space-y-4">
+            <div className="space-y-4 overflow-y-auto pr-1 flex-1">
               {/* File Dropzone */}
               <div className="border-2 border-dashed border-emerald-300 bg-emerald-50/40 hover:bg-emerald-50 rounded-2xl p-5 text-center space-y-2 transition-colors cursor-pointer relative">
                 <input
@@ -289,34 +392,78 @@ export const AddStudentModal: React.FC<AddStudentModalProps> = ({
                     {fileName ? `الملف المرفوع: ${fileName}` : 'اضغطي هنا لاختيار ملف Excel أو اسحبيه إلى هنا'}
                   </p>
                   <p className="text-[11px] font-bold text-slate-500 mt-0.5">
-                    يجب أن يحتوي الملف على الأعمدة: <span className="text-teal-800 font-black">اسم الطالب</span> | <span className="text-teal-800 font-black">كود الطالب</span> | <span className="text-teal-800 font-black">الفصل</span>
+                    يجب أن يحتوي الملف على عمودين على الأقل: <span className="text-teal-800 font-black">اسم الطالب</span> | <span className="text-teal-800 font-black">كود الطالب</span>
                   </p>
                 </div>
               </div>
 
-              {/* Validation Status Banner */}
-              {hasClassError ? (
-                <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold space-y-1.5">
-                  <div className="flex items-center gap-2 font-black text-rose-900 text-sm">
-                    <AlertTriangle className="w-4.5 h-4.5 text-rose-600 shrink-0" />
-                    <span>تنبيه: توجد فصول في ملف Excel غير مضافة لهذه الدفعة!</span>
-                  </div>
-                  <p className="text-xs text-rose-700 leading-relaxed">
-                    الفصول التالية المذكورة في الملف غير موجودة بالدفعة الحالية:
-                    <span className="font-black bg-rose-200/80 text-rose-950 px-2 py-0.5 rounded-md mx-1">
-                      {missingClasses.join('، ')}
+              {/* Class Selection Dropdown (Mandatory before confirmation) */}
+              <div className="p-4 rounded-2xl bg-teal-50/70 border border-teal-200/80 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-black text-teal-950">
+                    اختر الفصل الذي سيتم إضافة الطلاب إليه <span className="text-rose-600 font-bold">*</span>
+                  </label>
+                  {selectedImportClass && (
+                    <span className="text-[11px] font-black bg-teal-200/80 text-teal-900 px-2 py-0.5 rounded-md">
+                      تم اختيار: {selectedImportClass}
                     </span>
-                    . يرجى إضافة هذه الفصول أولاً إلى الدفعة من تبويب "الفصول" أو تعديل أسماء الفصول بالملف قبل الاستيراد.
+                  )}
+                </div>
+                <select
+                  value={selectedImportClass}
+                  onChange={(e) => setSelectedImportClass(e.target.value)}
+                  className="w-full p-3 bg-white border border-teal-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500 font-black text-slate-900 text-xs shadow-sm cursor-pointer"
+                >
+                  <option value="">-- اضغطي هنا لاختيار الفصل من فصول الدفعة --</option>
+                  {classesList.map((cls) => (
+                    <option key={cls} value={cls}>
+                      🏫 {cls}
+                    </option>
+                  ))}
+                </select>
+                {!selectedImportClass && (
+                  <p className="text-[11px] font-bold text-amber-700 flex items-center gap-1.5 pt-0.5">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                    <span>يجب اختيار الفصل يدويًا لتوزيع وإضافة جميع طلاب الملف إليه.</span>
+                  </p>
+                )}
+              </div>
+
+              {/* Error & Validation Status Banners */}
+              {excelError && (
+                <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>{excelError}</span>
+                </div>
+              )}
+
+              {emptyNameRowsCount > 0 && (
+                <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold flex items-center gap-2">
+                  <XCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>تنبيه: يوجد عدد ({emptyNameRowsCount}) صف بدون اسم طالب في الملف. يرجى تصحيح الملف.</span>
+                </div>
+              )}
+
+              {hasDuplicateCodes && (
+                <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs font-bold space-y-1">
+                  <div className="flex items-center gap-2 font-black">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                    <span>تنبيه: توجد أكواد طلاب مكررة داخل نفس الملف!</span>
+                  </div>
+                  <p className="text-[11px] text-amber-800">
+                    الأكواد المكررة: <span className="font-mono font-black text-rose-700">{duplicateCodes.join('، ')}</span>. يرجى التأكد من تميز كود كل طالبة قبل الاستيراد.
                   </p>
                 </div>
-              ) : (
+              )}
+
+              {parsedStudents.length > 0 && isClassSelected && emptyNameRowsCount === 0 && !hasDuplicateCodes && (
                 <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                    <span>جميع الفصول المذكورة بالملف متطابقة وموجودة بالدفعة. مستعدة للتوزيع التلقائي!</span>
+                    <span>البيانات مكتملة وجاهزة! سيتم إضافة ({parsedStudents.length}) طلاب إلى ({selectedImportClass}).</span>
                   </div>
-                  <span className="text-[10px] bg-emerald-100 text-emerald-900 px-2 py-0.5 rounded-md font-black">
-                    فصول الدفعة مطابقة
+                  <span className="text-[10px] bg-emerald-200/80 text-emerald-950 px-2 py-0.5 rounded-md font-black">
+                    جاهز للاعتماد
                   </span>
                 </div>
               )}
@@ -324,72 +471,115 @@ export const AddStudentModal: React.FC<AddStudentModalProps> = ({
               {/* Data Preview Table */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between text-xs font-bold text-slate-700">
-                  <span>معاينة بيانات الطلاب قبل الاستيراد والتوزيع ({previewRows.length} طلاب):</span>
-                  <span className="text-teal-700 bg-teal-50 px-2.5 py-0.5 rounded-md border border-teal-100 font-black">
-                    توزيع تلقائي على الفصول
-                  </span>
+                  <span>معاينة بيانات الطلاب المستخرجة من الملف ({parsedStudents.length} طلاب):</span>
+                  {selectedImportClass && (
+                    <span className="text-teal-700 bg-teal-50 px-2.5 py-0.5 rounded-md border border-teal-100 font-black">
+                      الفصل المختار: {selectedImportClass}
+                    </span>
+                  )}
                 </div>
 
-                <div className="max-h-48 overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50/50">
-                  <table className="w-full text-right text-xs">
-                    <thead className="bg-slate-100 text-slate-700 font-extrabold sticky top-0 border-b border-slate-200">
-                      <tr>
-                        <th className="p-2.5">اسم الطالب</th>
-                        <th className="p-2.5">كود الطالب</th>
-                        <th className="p-2.5">الفصل المخصص</th>
-                        <th className="p-2.5">حالة المطابقة</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200 text-slate-800 font-bold">
-                      {previewRows.map((row, idx) => {
-                        const isClassValid = classesList.some((c) => c.trim() === row.className.trim());
-                        return (
-                          <tr key={idx} className={isClassValid ? 'hover:bg-white' : 'bg-rose-50/60 hover:bg-rose-50'}>
-                            <td className="p-2.5 text-slate-900 font-black">{row.name}</td>
-                            <td className="p-2.5 text-slate-600 font-mono text-[11px]">{row.studentCode || `STU-${101 + idx}`}</td>
-                            <td className="p-2.5 font-black text-teal-800">{row.className}</td>
-                            <td className="p-2.5">
-                              {isClassValid ? (
-                                <span className="text-[10px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 font-black inline-flex items-center gap-1">
-                                  <Check className="w-3 h-3" />
-                                  موجود بالدفعة
-                                </span>
-                              ) : (
-                                <span className="text-[10px] text-rose-700 bg-rose-100 px-2 py-0.5 rounded border border-rose-200 font-black inline-flex items-center gap-1">
-                                  <XCircle className="w-3 h-3" />
-                                  فصل غير مضاف
-                                </span>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                {parsedStudents.length === 0 ? (
+                  <div className="p-8 text-center rounded-2xl border border-slate-200 bg-slate-50 text-slate-400 text-xs font-bold space-y-1">
+                    <FileSpreadsheet className="w-8 h-8 mx-auto text-slate-300" />
+                    <p>لم يتم رفع أي ملف بعد. يرجى اختيار ملف Excel لمعاينة بيانات الطلاب.</p>
+                  </div>
+                ) : (
+                  <div className="max-h-52 overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50/50">
+                    <table className="w-full text-right text-xs">
+                      <thead className="bg-slate-100 text-slate-700 font-extrabold sticky top-0 border-b border-slate-200">
+                        <tr>
+                          <th className="p-2.5 w-10 text-center">#</th>
+                          <th className="p-2.5">اسم الطالب</th>
+                          <th className="p-2.5">كود الطالب</th>
+                          <th className="p-2.5">الفصل المحدد</th>
+                          <th className="p-2.5">حالة البيانات</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200 text-slate-800 font-bold">
+                        {parsedStudents.map((row, idx) => {
+                          const isNameValid = Boolean(row.name && row.name.trim());
+                          const isCodeDup = Boolean(row.studentCode && codeCounts[row.studentCode.trim()] > 1);
+
+                          return (
+                            <tr key={idx} className={!isNameValid || isCodeDup ? 'bg-rose-50/60 hover:bg-rose-50' : 'hover:bg-white'}>
+                              <td className="p-2.5 text-center text-slate-400 font-mono text-[11px]">{idx + 1}</td>
+                              <td className="p-2.5 text-slate-900 font-black">
+                                {row.name ? row.name : <span className="text-rose-600 italic">❌ اسم فارغ</span>}
+                              </td>
+                              <td className="p-2.5 text-slate-600 font-mono text-[11px]">
+                                {row.studentCode ? row.studentCode : <span className="text-slate-400 italic">—</span>}
+                              </td>
+                              <td className="p-2.5 font-black">
+                                {selectedImportClass ? (
+                                  <span className="text-teal-800">{selectedImportClass}</span>
+                                ) : (
+                                  <span className="text-amber-700 text-[11px]">لم يتم تحديد فصل ⚠️</span>
+                                )}
+                              </td>
+                              <td className="p-2.5">
+                                {!isNameValid ? (
+                                  <span className="text-[10px] text-rose-700 bg-rose-100 px-2 py-0.5 rounded border border-rose-200 font-black inline-flex items-center gap-1">
+                                    <XCircle className="w-3 h-3" />
+                                    اسم فارغ
+                                  </span>
+                                ) : isCodeDup ? (
+                                  <span className="text-[10px] text-amber-800 bg-amber-100 px-2 py-0.5 rounded border border-amber-200 font-black inline-flex items-center gap-1">
+                                    <AlertTriangle className="w-3 h-3" />
+                                    كود مكرر
+                                  </span>
+                                ) : !selectedImportClass ? (
+                                  <span className="text-[10px] text-amber-800 bg-amber-50 px-2 py-0.5 rounded border border-amber-200 font-black inline-flex items-center gap-1">
+                                    <Clock className="w-3 h-3" />
+                                    بانتظار الفصل
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 font-black inline-flex items-center gap-1">
+                                    <Check className="w-3 h-3" />
+                                    جاهز للاستيراد
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
 
               {/* Action Buttons */}
-              <div className="pt-3 flex items-center justify-between gap-2 border-t border-slate-100">
+              <div className="pt-3 flex items-center justify-between gap-2 border-t border-slate-100 shrink-0">
                 <button
                   type="button"
                   onClick={onClose}
-                  className="px-4 py-2.5 rounded-xl bg-slate-100 text-slate-600 font-bold hover:bg-slate-200 text-xs"
+                  className="px-4 py-2.5 rounded-xl bg-slate-100 text-slate-600 font-bold hover:bg-slate-200 text-xs cursor-pointer"
                 >
-                  إلغاء
+                  إلغاء / إغلاق
                 </button>
                 <button
                   type="button"
-                  disabled={hasClassError}
+                  disabled={!canConfirmImport}
                   onClick={handleConfirmExcelImport}
                   className={`px-5 py-2.5 rounded-xl font-black text-xs flex items-center gap-2 transition-all ${
-                    hasClassError
+                    !canConfirmImport
                       ? 'bg-slate-200 text-slate-400 cursor-not-allowed border border-slate-300'
                       : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-md shadow-emerald-600/20 cursor-pointer'
                   }`}
                 >
                   <Check className="w-4 h-4" />
-                  <span>{hasClassError ? 'عفواً، أضيفي الفصول المفقودة للدفعة أولاً' : `اعتماد وتوزيع (${previewRows.length}) طلاب على الفصول`}</span>
+                  <span>
+                    {parsedStudents.length === 0
+                      ? 'يرجى رفع ملف Excel'
+                      : !isClassSelected
+                      ? 'الرجاء اختيار الفصل أولاً'
+                      : emptyNameRowsCount > 0
+                      ? 'يرجى تصحيح الأسماء الفارغة'
+                      : hasDuplicateCodes
+                      ? 'يرجى تصحيح الأكواد المكررة'
+                      : `تأكيد واستيراد (${parsedStudents.length}) طلاب إلى ${selectedImportClass}`}
+                  </span>
                 </button>
               </div>
             </div>
@@ -397,10 +587,10 @@ export const AddStudentModal: React.FC<AddStudentModalProps> = ({
 
           {/* TAB 2: MANUAL ADDITION */}
           {importMethod === 'manual' && (
-            <form onSubmit={handleManualSubmit} className="space-y-4 text-xs font-bold text-slate-700">
+            <form onSubmit={handleManualSubmit} className="space-y-4 text-xs font-bold text-slate-700 overflow-y-auto pr-1 flex-1">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block mb-1 text-slate-800">اسم الطالب / الطالبة الرباعي</label>
+                  <label className="block mb-1 text-slate-800">اسم الطالب / الطالبة الرباعي <span className="text-rose-600">*</span></label>
                   <input
                     type="text"
                     required
@@ -425,7 +615,7 @@ export const AddStudentModal: React.FC<AddStudentModalProps> = ({
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block mb-1 text-slate-800">الفصل الدراسي</label>
+                  <label className="block mb-1 text-slate-800">الفصل الدراسي <span className="text-rose-600">*</span></label>
                   <select
                     value={className}
                     onChange={(e) => setClassName(e.target.value)}
@@ -470,17 +660,17 @@ export const AddStudentModal: React.FC<AddStudentModalProps> = ({
                 </div>
               </div>
 
-              <div className="pt-3 flex items-center justify-end gap-2 border-t border-slate-100">
+              <div className="pt-3 flex items-center justify-end gap-2 border-t border-slate-100 shrink-0">
                 <button
                   type="button"
                   onClick={onClose}
-                  className="px-4 py-2.5 rounded-xl bg-slate-100 text-slate-600 font-bold hover:bg-slate-200"
+                  className="px-4 py-2.5 rounded-xl bg-slate-100 text-slate-600 font-bold hover:bg-slate-200 cursor-pointer"
                 >
                   إلغاء
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2.5 rounded-xl bg-teal-600 text-white font-black hover:bg-teal-700 shadow-md shadow-teal-600/20 flex items-center gap-1.5"
+                  className="px-5 py-2.5 rounded-xl bg-teal-600 text-white font-black hover:bg-teal-700 shadow-md shadow-teal-600/20 flex items-center gap-1.5 cursor-pointer"
                 >
                   <UserPlus className="w-4 h-4" />
                   <span>حفظ وإضافة الطالب</span>
@@ -1613,7 +1803,8 @@ interface UploadLibraryModalProps {
     targetStudentCode?: string;
     fileSize?: string;
     duration?: string;
-  }) => void;
+    fileObject?: File;
+  }) => Promise<void> | void;
   currentBatchName?: string;
   batchesList?: Array<{ id: string; name: string }>;
   clubsList?: Array<{ id: string; name: string } | string>;
@@ -1629,6 +1820,8 @@ export const UploadLibraryModal: React.FC<UploadLibraryModalProps> = ({
   clubsList = [],
   studentsList = [],
 }) => {
+  const [uploadMode, setUploadMode] = useState<'file' | 'url'>('file');
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [fileType, setFileType] = useState<'pdf' | 'video' | 'audio' | 'image' | 'link' | 'doc'>('pdf');
@@ -1646,7 +1839,11 @@ export const UploadLibraryModal: React.FC<UploadLibraryModalProps> = ({
   const [selectedStudentId, setSelectedStudentId] = useState(studentsList[0]?.id || '');
   const [fileSize, setFileSize] = useState('3.5 MB');
   const [duration, setDuration] = useState('10:00 دقيقة');
+  const [isDragging, setIsDragging] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const wasOpenRef = useRef(false);
 
   React.useEffect(() => {
@@ -1662,15 +1859,83 @@ export const UploadLibraryModal: React.FC<UploadLibraryModalProps> = ({
       if (studentsList.length > 0) {
         setSelectedStudentId(studentsList[0].id);
       }
+      setSelectedFile(null);
+      setUploadError(null);
+      setIsSubmitting(false);
     }
     wasOpenRef.current = isOpen;
   }, [isOpen, currentBatchName]);
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleFileSelect = (file: File) => {
+    setUploadError(null);
+    const MAX_SIZE = 50 * 1024 * 1024; // 50MB
+    if (file.size > MAX_SIZE) {
+      setUploadError(`حجم الملف (${(file.size / (1024 * 1024)).toFixed(1)} MB) يتجاوز الحد الأقصى المسموح (50 ميجابايت).`);
+      return;
+    }
+
+    setSelectedFile(file);
+
+    // Auto calculate formatted size
+    let formatted = '1 MB';
+    if (file.size < 1024 * 1024) {
+      formatted = `${Math.round(file.size / 1024)} KB`;
+    } else {
+      formatted = `${(file.size / (1024 * 1024)).toFixed(1)} MB`;
+    }
+    setFileSize(formatted);
+
+    // Auto detect file type
+    const mime = file.type.toLowerCase();
+    const name = file.name.toLowerCase();
+
+    if (mime.includes('pdf') || name.endsWith('.pdf')) {
+      setFileType('pdf');
+    } else if (mime.startsWith('image/') || /\.(jpg|jpeg|png|webp|gif|svg)$/i.test(name)) {
+      setFileType('image');
+    } else if (mime.startsWith('audio/') || /\.(mp3|wav|m4a|ogg|aac)$/i.test(name)) {
+      setFileType('audio');
+    } else if (mime.startsWith('video/') || /\.(mp4|webm|mov|mkv)$/i.test(name)) {
+      setFileType('video');
+    } else {
+      setFileType('doc');
+    }
+
+    // Auto title if empty
+    if (!title.trim()) {
+      const cleanTitle = file.name.replace(/\.[^/.]+$/, '').replace(/[_\\-]/g, ' ');
+      setTitle(cleanTitle);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
-    if (!title.trim()) return;
+    setIsDragging(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      handleFileSelect(e.dataTransfer.files[0]);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setUploadError(null);
+
+    if (!title.trim()) {
+      setUploadError('يرجى كتابة عنوان المورد.');
+      return;
+    }
+
+    if (uploadMode === 'file' && !selectedFile) {
+      setUploadError('يرجى اختيار ملف لرفعه إلى المكتبة.');
+      return;
+    }
+
+    if (uploadMode === 'url' && !url.trim()) {
+      setUploadError('يرجى إدخال الرابط الخارجي للمورد.');
+      return;
+    }
 
     let targetName = 'الجميع';
     let targetId: string | undefined = undefined;
@@ -1697,28 +1962,39 @@ export const UploadLibraryModal: React.FC<UploadLibraryModalProps> = ({
       }
     }
 
-    onSubmit({
-      title,
-      description,
-      fileType,
-      url: url || (fileType === 'link' ? 'https://quran.com' : 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf'),
-      thumbnailUrl,
-      category,
-      targetType,
-      targetId,
-      targetName,
-      targetStudentId,
-      targetStudentCode,
-      fileSize: fileType === 'pdf' || fileType === 'image' || fileType === 'doc' ? fileSize : undefined,
-      duration: fileType === 'video' || fileType === 'audio' ? duration : undefined,
-    });
+    setIsSubmitting(true);
 
-    // Reset
-    setTitle('');
-    setDescription('');
-    setUrl('');
-    setThumbnailUrl('');
-    onClose();
+    try {
+      await onSubmit({
+        title: title.trim(),
+        description: description.trim(),
+        fileType,
+        url: uploadMode === 'file' ? '' : (url.trim() || (fileType === 'link' ? 'https://quran.com' : 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf')),
+        thumbnailUrl: thumbnailUrl.trim(),
+        category: category.trim(),
+        targetType,
+        targetId,
+        targetName,
+        targetStudentId,
+        targetStudentCode,
+        fileSize: fileType === 'pdf' || fileType === 'image' || fileType === 'doc' ? fileSize : undefined,
+        duration: fileType === 'video' || fileType === 'audio' ? duration : undefined,
+        fileObject: uploadMode === 'file' && selectedFile ? selectedFile : undefined,
+      });
+
+      // Reset
+      setTitle('');
+      setDescription('');
+      setUrl('');
+      setThumbnailUrl('');
+      setSelectedFile(null);
+      setIsSubmitting(false);
+      onClose();
+    } catch (err: any) {
+      console.error('Upload error in modal:', err);
+      setUploadError(err.message || 'حدث خطأ أثناء رفع الملف وحفظ المورد.');
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -1733,19 +2009,120 @@ export const UploadLibraryModal: React.FC<UploadLibraryModalProps> = ({
           <div className="flex items-center justify-between border-b border-slate-100 pb-4">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-2xl bg-teal-50 text-teal-700 flex items-center justify-center border border-teal-100 font-bold">
-                <Upload className="w-5 h-5" />
+                <UploadCloud className="w-5 h-5" />
               </div>
               <div>
                 <h3 className="font-black text-lg text-slate-900">إضافة مورد جديد للمكتبة 📚</h3>
-                <p className="text-xs font-bold text-slate-500">إضافة وسائط ومراجع تعليمية تظهر فوراً للطالبات في المكتبة</p>
+                <p className="text-xs font-bold text-slate-500">رفع ملفات مشفرة خاصة أو إضافة روابط مراجع تعليمية</p>
               </div>
             </div>
-            <button onClick={onClose} className="p-1.5 rounded-xl hover:bg-slate-100 text-slate-400">
+            <button onClick={onClose} disabled={isSubmitting} className="p-1.5 rounded-xl hover:bg-slate-100 text-slate-400 cursor-pointer">
               <X className="w-5 h-5" />
             </button>
           </div>
 
+          {/* Mode Selector: Direct Storage Upload vs External Link */}
+          <div className="grid grid-cols-2 gap-2 bg-slate-100 p-1.5 rounded-2xl">
+            <button
+              type="button"
+              onClick={() => setUploadMode('file')}
+              className={`py-2 px-3 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                uploadMode === 'file'
+                  ? 'bg-white text-teal-800 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <UploadCloud className="w-4 h-4 text-teal-600" />
+              <span>رفع ملف من الجهاز 📁</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setUploadMode('url')}
+              className={`py-2 px-3 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-2 cursor-pointer ${
+                uploadMode === 'url'
+                  ? 'bg-white text-teal-800 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <LinkIcon className="w-4 h-4 text-teal-600" />
+              <span>رابط خارجي 🔗</span>
+            </button>
+          </div>
+
+          {uploadError && (
+            <div className="p-3.5 bg-rose-50 border border-rose-200 rounded-2xl flex items-center gap-2.5 text-rose-800 text-xs font-bold">
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+              <span>{uploadError}</span>
+            </div>
+          )}
+
           <form onSubmit={handleSubmit} className="space-y-4 text-xs font-bold text-slate-700">
+            {/* File Upload Zone (When Mode is 'file') */}
+            {uploadMode === 'file' && (
+              <div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  className="hidden"
+                  accept=".pdf,.png,.jpg,.jpeg,.webp,.gif,.svg,.mp3,.wav,.m4a,.ogg,.mp4,.webm,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt"
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files.length > 0) {
+                      handleFileSelect(e.target.files[0]);
+                    }
+                  }}
+                />
+
+                {!selectedFile ? (
+                  <div
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      setIsDragging(true);
+                    }}
+                    onDragLeave={() => setIsDragging(false)}
+                    onDrop={handleDrop}
+                    onClick={() => fileInputRef.current?.click()}
+                    className={`border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer transition-all ${
+                      isDragging
+                        ? 'border-teal-500 bg-teal-50/50'
+                        : 'border-slate-300 hover:border-teal-400 bg-slate-50/50 hover:bg-teal-50/20'
+                    }`}
+                  >
+                    <div className="w-12 h-12 rounded-2xl bg-teal-100 text-teal-700 flex items-center justify-center mx-auto mb-3">
+                      <UploadCloud className="w-6 h-6" />
+                    </div>
+                    <p className="text-sm font-black text-slate-800 mb-1">اضغط لاختيار ملف أو اسحبه وأفلته هنا</p>
+                    <p className="text-[11px] font-bold text-slate-500">
+                      يدعم المستندات (PDF, Word, Excel, PPT) والصوتيات والفيديوهات والصور حتى 50MB
+                    </p>
+                  </div>
+                ) : (
+                  <div className="p-3.5 bg-teal-50 border border-teal-200 rounded-2xl flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-10 h-10 rounded-xl bg-teal-600 text-white flex items-center justify-center shrink-0 font-bold">
+                        <FileIcon className="w-5 h-5" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="font-black text-slate-900 text-xs truncate">{selectedFile.name}</p>
+                        <p className="text-[11px] font-bold text-teal-700">{fileSize} • جاهز للرفع السحابي الخاص</p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedFile(null);
+                        if (fileInputRef.current) fileInputRef.current.value = '';
+                      }}
+                      className="p-1.5 rounded-lg bg-white hover:bg-rose-50 text-slate-500 hover:text-rose-600 border border-slate-200 cursor-pointer"
+                      title="تغيير الملف"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Title */}
             <div>
               <label className="block mb-1 text-slate-800">عنوان المورد أو المستند *</label>
@@ -1781,6 +2158,7 @@ export const UploadLibraryModal: React.FC<UploadLibraryModalProps> = ({
                   className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500 font-bold text-slate-900"
                 >
                   <option value="pdf">📄 مستند PDF</option>
+                  <option value="doc">📑 مستند / ملف نصي</option>
                   <option value="video">🎥 فيديو تعليمي</option>
                   <option value="audio">🎧 تسجيل صوتي / تلاوة</option>
                   <option value="image">🖼️ صورة / إنفوجرافيك</option>
@@ -1932,23 +2310,26 @@ export const UploadLibraryModal: React.FC<UploadLibraryModalProps> = ({
               )}
             </div>
 
-            {/* URL or File Link */}
-            <div>
-              <label className="block mb-1 text-slate-800">رابط الملف أو الفيديو أو الموقع المباشر 🔗</label>
-              <input
-                type="url"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                placeholder={
-                  fileType === 'link'
-                    ? 'https://example.com/site'
-                    : fileType === 'video'
-                    ? 'https://commondatastorage.googleapis.com/...mp4'
-                    : 'https://example.com/document.pdf'
-                }
-                className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500 font-bold text-slate-900 text-left dir-ltr"
-              />
-            </div>
+            {/* External URL (When Mode is 'url') */}
+            {uploadMode === 'url' && (
+              <div>
+                <label className="block mb-1 text-slate-800">رابط الملف أو الفيديو أو الموقع المباشر 🔗</label>
+                <input
+                  type="url"
+                  required={uploadMode === 'url'}
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  placeholder={
+                    fileType === 'link'
+                      ? 'https://example.com/site'
+                      : fileType === 'video'
+                      ? 'https://commondatastorage.googleapis.com/...mp4'
+                      : 'https://example.com/document.pdf'
+                  }
+                  className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500 font-bold text-slate-900 text-left dir-ltr"
+                />
+              </div>
+            )}
 
             {/* Optional Thumbnail URL */}
             <div>
@@ -1994,15 +2375,24 @@ export const UploadLibraryModal: React.FC<UploadLibraryModalProps> = ({
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-2.5 rounded-xl bg-slate-100 text-slate-600 font-bold hover:bg-slate-200"
+                disabled={isSubmitting}
+                className="px-4 py-2.5 rounded-xl bg-slate-100 text-slate-600 font-bold hover:bg-slate-200 cursor-pointer disabled:opacity-50"
               >
                 إلغاء
               </button>
               <button
                 type="submit"
-                className="px-6 py-2.5 rounded-xl bg-teal-600 text-white font-black hover:bg-teal-700 shadow-md shadow-teal-600/20"
+                disabled={isSubmitting}
+                className="px-6 py-2.5 rounded-xl bg-teal-600 text-white font-black hover:bg-teal-700 shadow-md shadow-teal-600/20 cursor-pointer disabled:opacity-50 flex items-center gap-2"
               >
-                حفظ ونشر المورد للطلاب 🚀
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>جاري رفع الملف وحفظ المورد...</span>
+                  </>
+                ) : (
+                  <span>حفظ ونشر المورد للطلاب 🚀</span>
+                )}
               </button>
             </div>
           </form>
@@ -4121,3 +4511,178 @@ export const ConfirmDeleteLibraryModal: React.FC<ConfirmDeleteLibraryModalProps>
     </AnimatePresence>
   );
 };
+
+// --- EXCEL IMPORT RESULT REPORT MODAL ---
+interface ExcelImportResultModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  result: ExcelImportResult | null;
+}
+
+export const ExcelImportResultModal: React.FC<ExcelImportResultModalProps> = ({
+  isOpen,
+  onClose,
+  result,
+}) => {
+  if (!isOpen || !result) return null;
+
+  const isAllSuccess = result.failedCount === 0 && result.savedInSupabase > 0;
+  const isPartialSuccess = result.savedInSupabase > 0 && result.failedCount > 0;
+  const isAllFailed = result.savedInSupabase === 0 && result.failedCount > 0;
+
+  return (
+    <AnimatePresence>
+      <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 dir-rtl">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          exit={{ opacity: 0, scale: 0.95 }}
+          className="w-full max-w-2xl bg-white rounded-[32px] p-6 sm:p-7 shadow-2xl border border-slate-100 space-y-5 max-h-[90vh] flex flex-col"
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between border-b border-slate-100 pb-4 shrink-0">
+            <div className="flex items-center gap-3">
+              <div
+                className={`w-11 h-11 rounded-2xl flex items-center justify-center font-bold border ${
+                  isAllSuccess
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                    : isPartialSuccess
+                    ? 'bg-amber-50 text-amber-700 border-amber-200'
+                    : 'bg-rose-50 text-rose-700 border-rose-200'
+                }`}
+              >
+                <FileSpreadsheet className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-black text-lg text-slate-900">تقرير استيراد ملف Excel</h3>
+                <p className="text-xs text-slate-500 font-bold">
+                  تفاصيل نتائج فحص وحفظ الطلاب في قاعدة البيانات
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={onClose}
+              className="p-1.5 rounded-xl hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          {/* Stats Breakdown Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 shrink-0">
+            <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-2xl text-center space-y-1">
+              <span className="text-[11px] font-bold text-slate-500 block">إجمالي الصفوف المقروءة</span>
+              <span className="text-xl font-black text-slate-800">{result.totalRows}</span>
+            </div>
+
+            <div className="p-3.5 bg-sky-50 border border-sky-200 rounded-2xl text-center space-y-1">
+              <span className="text-[11px] font-bold text-sky-800 block">الصفوف الصالحة</span>
+              <span className="text-xl font-black text-sky-900">{result.validRows}</span>
+            </div>
+
+            <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-2xl text-center space-y-1">
+              <span className="text-[11px] font-bold text-emerald-800 block">تم الحفظ في Supabase</span>
+              <div className="flex items-center justify-center gap-1">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span className="text-xl font-black text-emerald-900">{result.savedInSupabase}</span>
+              </div>
+            </div>
+
+            <div
+              className={`p-3.5 rounded-2xl text-center space-y-1 border ${
+                result.failedCount > 0
+                  ? 'bg-rose-50 border-rose-200 text-rose-900'
+                  : 'bg-slate-50 border-slate-200 text-slate-400'
+              }`}
+            >
+              <span className="text-[11px] font-bold block">تعذر حفظهم</span>
+              <div className="flex items-center justify-center gap-1">
+                {result.failedCount > 0 && <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />}
+                <span className="text-xl font-black">{result.failedCount}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Status Message */}
+          <div className="shrink-0">
+            {isAllSuccess && (
+              <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-bold flex items-center gap-2">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                <span>🎉 تم حفظ جميع الطلاب ({result.savedInSupabase}) بنجاح في قاعدة بيانات Supabase!</span>
+              </div>
+            )}
+
+            {isPartialSuccess && (
+              <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-950 text-xs font-bold flex items-center gap-2">
+                <AlertCircle className="w-5 h-5 text-amber-600 shrink-0" />
+                <span>
+                  ⚠️ تم حفظ ({result.savedInSupabase}) طلاب بنجاح، بينما تعذر حفظ ({result.failedCount}) طلاب. يمكنك مراجعة أسباب الفشل أدناه.
+                </span>
+              </div>
+            )}
+
+            {isAllFailed && (
+              <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-rose-950 text-xs font-bold flex items-center gap-2">
+                <XCircle className="w-5 h-5 text-rose-600 shrink-0" />
+                <span>❌ تعذر حفظ الطلاب في قاعدة البيانات. يرجى مراجعة تفاصيل الخطأ أدناه.</span>
+              </div>
+            )}
+          </div>
+
+          {/* Failures Table / List if any */}
+          {result.failures.length > 0 && (
+            <div className="space-y-2 overflow-y-auto flex-1 pr-1">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-black text-slate-800">
+                  تفاصيل الطلاب الذين فشل حفظهم ({result.failures.length}):
+                </span>
+                <span className="text-[10px] font-bold text-slate-400">
+                  تم الاستمرار في معالجة باقي الطلاب دون توقف
+                </span>
+              </div>
+
+              <div className="border border-slate-200 rounded-2xl overflow-hidden shadow-xs">
+                <table className="w-full text-right text-xs">
+                  <thead className="bg-slate-100 text-slate-700 font-black border-b border-slate-200">
+                    <tr>
+                      <th className="p-3">#</th>
+                      <th className="p-3">اسم الطالب</th>
+                      <th className="p-3">الكود</th>
+                      <th className="p-3">سبب الفشل</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 font-bold text-slate-800 bg-white">
+                    {result.failures.map((f, i) => (
+                      <tr key={i} className="hover:bg-rose-50/50 transition-colors">
+                        <td className="p-3 text-slate-400 font-mono text-[11px]">{i + 1}</td>
+                        <td className="p-3 font-black text-slate-900">{f.name || 'بدون اسم'}</td>
+                        <td className="p-3 font-mono text-[11px] text-teal-800">
+                          {f.studentCode ? f.studentCode : <span className="text-slate-400">--</span>}
+                        </td>
+                        <td className="p-3 text-rose-700 text-[11px] leading-relaxed">
+                          {f.reason}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Footer Close Button */}
+          <div className="pt-3 border-t border-slate-100 flex items-center justify-end shrink-0">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-6 py-2.5 rounded-xl bg-slate-900 text-white font-black text-xs hover:bg-slate-800 shadow-md transition-all cursor-pointer"
+            >
+              إغلاق التقرير
+            </button>
+          </div>
+        </motion.div>
+      </div>
+    </AnimatePresence>
+  );
+};
+

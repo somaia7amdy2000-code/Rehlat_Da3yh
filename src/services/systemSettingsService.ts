@@ -175,53 +175,252 @@ export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   ],
 };
 
-const SETTINGS_STORAGE_KEY = 'rihlat_system_settings_v1';
+// In-memory cache for fast lookups per batch (populated exclusively from Supabase)
+const batchStationsCache = new Map<string, JourneyStationSetting[]>();
 
-let currentSettings: SystemSettings = loadSettings();
-const listeners: Array<(settings: SystemSettings) => void> = [];
-
-function loadSettings(): SystemSettings {
-  try {
-    const saved = localStorage.getItem(SETTINGS_STORAGE_KEY);
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      return { ...DEFAULT_SYSTEM_SETTINGS, ...parsed };
-    }
-  } catch (err) {
-    console.warn('Failed to load system settings, falling back to defaults:', err);
-  }
-  return DEFAULT_SYSTEM_SETTINGS;
+export function isValidUUID(id?: string): boolean {
+  return typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 }
 
+/**
+ * Validation for stations configuration
+ */
+export function validateStations(stations: JourneyStationSetting[]): { isValid: boolean; error?: string } {
+  if (!stations || !Array.isArray(stations) || stations.length === 0) {
+    return { isValid: false, error: 'يجب أن يحتوي النظام على محطة واحدة على الأقل في الرحلة.' };
+  }
+
+  for (let i = 0; i < stations.length; i++) {
+    const st = stations[i];
+    if (!st.title || !st.title.trim()) {
+      return { isValid: false, error: `يرجى كتابة عنوان صالح للمحطة رقم ${i + 1}.` };
+    }
+    if (!st.badge || !st.badge.trim()) {
+      return { isValid: false, error: `يرجى كتابة اسم الشارة للمحطة "${st.title}".` };
+    }
+    if (typeof st.threshold !== 'number' || isNaN(st.threshold)) {
+      return { isValid: false, error: `قيمة عتبة النقاط للمحطة "${st.title}" غير صالحة.` };
+    }
+    if (st.threshold < 0) {
+      return { isValid: false, error: `لا يمكن إدخال قيم سالبة لعتبات النقاط في المحطة "${st.title}".` };
+    }
+  }
+
+  // First station must start at 0
+  if (stations[0].threshold !== 0) {
+    return { isValid: false, error: 'يجب أن تبدأ المحطة الأولى دائماً بعتبة 0 XP (نقطة الانطلاق).' };
+  }
+
+  // Thresholds must be strictly ascending (prevents overlapping and invalid ranges)
+  for (let i = 1; i < stations.length; i++) {
+    if (stations[i].threshold <= stations[i - 1].threshold) {
+      return {
+        isValid: false,
+        error: `يجب أن تكون عتبة المحطة "${stations[i].title}" (${stations[i].threshold} XP) أكبر تماماً من عتبة المحطة السابقة "${stations[i - 1].title}" (${stations[i - 1].threshold} XP) لتجنب تداخل المستويات.`,
+      };
+    }
+  }
+
+  return { isValid: true };
+}
+
+let currentSettings: SystemSettings = DEFAULT_SYSTEM_SETTINGS;
+const listeners: Array<(settings: SystemSettings) => void> = [];
+
 export function getSystemSettings(): SystemSettings {
-  currentSettings = loadSettings();
   return currentSettings;
 }
 
-export function saveSystemSettings(newSettings: SystemSettings): SystemSettings {
-  currentSettings = { ...newSettings };
-  try {
-    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(currentSettings));
-  } catch (err) {
-    console.error('Failed to persist system settings:', err);
-    throw new Error('فشل حفظ الإعدادات في التخزين المحلي. يرجى التحقق من مساحة التخزين.');
+/**
+ * Synchronous retrieval of batch stations from in-memory cache (populated by Supabase),
+ * falling back to default stations if not yet loaded or not configured.
+ */
+export function getBatchStationsSync(batchId?: string): JourneyStationSetting[] {
+  if (!batchId) {
+    return DEFAULT_SYSTEM_SETTINGS.stations;
+  }
+
+  if (batchStationsCache.has(batchId)) {
+    return batchStationsCache.get(batchId)!;
+  }
+
+  return DEFAULT_SYSTEM_SETTINGS.stations;
+}
+
+/**
+ * Asynchronous retrieval of batch stations from Supabase (Source of Truth).
+ * If no custom settings exist for this batch in Supabase, returns DEFAULT_SYSTEM_SETTINGS.stations.
+ */
+export async function getBatchStations(batchId?: string): Promise<JourneyStationSetting[]> {
+  if (!batchId || !isValidUUID(batchId)) {
+    return DEFAULT_SYSTEM_SETTINGS.stations;
   }
 
   if (isSupabaseConfigured) {
     try {
-      supabase.from('system_settings').upsert({
-        id: 'global',
-        rewards_config: currentSettings.rewards,
-        branding_config: currentSettings.branding,
-        leaderboard_config: currentSettings.leaderboard,
-        updated_at: new Date().toISOString()
-      }).then(({ error }) => {
-        if (error) console.warn('Supabase system_settings save warning:', error.message);
-      });
+      const { data, error } = await supabase
+        .from('system_settings')
+        .select('id, batch_id, stations_config')
+        .eq('batch_id', batchId)
+        .maybeSingle();
+
+      if (error) {
+        console.warn(`[SystemSettings] Error querying system_settings for batch ${batchId}:`, error.message);
+      } else if (data && data.stations_config && Array.isArray(data.stations_config) && data.stations_config.length > 0) {
+        const validated = validateStations(data.stations_config);
+        if (validated.isValid) {
+          batchStationsCache.set(batchId, data.stations_config);
+          return data.stations_config;
+        }
+      } else {
+        // No custom record in Supabase for this batch; clear any stale memory cache
+        batchStationsCache.delete(batchId);
+      }
     } catch (err) {
-      console.warn('Supabase system_settings save exception:', err);
+      console.warn('[SystemSettings] Failed to fetch batch stations from Supabase:', err);
     }
   }
+
+  return getBatchStationsSync(batchId);
+}
+
+/**
+ * Asynchronous retrieval of batch journey stations specifically for Student Portal via secure RPC.
+ */
+export async function getStudentJourneyStations(
+  studentId: string,
+  studentCode: string
+): Promise<JourneyStationSetting[] | null> {
+  if (!isSupabaseConfigured || !isValidUUID(studentId) || !studentCode) {
+    return null;
+  }
+
+  try {
+    const { data, error } = await supabase.rpc('get_student_journey_stations', {
+      p_student_id: studentId,
+      p_student_code: studentCode.trim(),
+    });
+
+    if (error) {
+      console.warn('[SystemSettings] get_student_journey_stations RPC error:', error.message);
+      return null;
+    }
+
+    if (data && Array.isArray(data) && data.length > 0) {
+      const validated = validateStations(data);
+      if (validated.isValid) {
+        return data;
+      }
+    }
+  } catch (err) {
+    console.warn('[SystemSettings] Failed to fetch student journey stations via RPC:', err);
+  }
+
+  return null;
+}
+
+/**
+ * Save batch stations with Supabase as Source of Truth and strict validation.
+ * Uses atomic upsert on batch_id with fallback to insert/update.
+ */
+export async function saveBatchStations(
+  batchId: string | undefined,
+  stations: JourneyStationSetting[]
+): Promise<JourneyStationSetting[]> {
+  const validation = validateStations(stations);
+  if (!validation.isValid) {
+    throw new Error(validation.error || 'إعدادات المحطات غير صالحة.');
+  }
+
+  if (!batchId || !isValidUUID(batchId)) {
+    throw new Error('يرجى تحديد دفعة صالحة لحفظ الإعدادات الخاصة بها.');
+  }
+
+  // Normalize station levels and threshold numbers
+  const normalizedStations: JourneyStationSetting[] = stations.map((st, idx) => ({
+    ...st,
+    level: idx + 1,
+    threshold: Number(st.threshold) || 0,
+  }));
+
+  // 1. SUPABASE IS THE TRUE SOURCE OF TRUTH
+  if (isSupabaseConfigured) {
+    // Attempt upsert on batch_id
+    const { error: upsertErr } = await supabase
+      .from('system_settings')
+      .upsert(
+        {
+          batch_id: batchId,
+          stations_config: normalizedStations,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'batch_id' }
+      );
+
+    if (upsertErr) {
+      console.warn('[SystemSettings] Upsert failed, attempting check and update/insert:', upsertErr.message);
+
+      // Fallback in case unique index is not yet applied: check if row exists
+      const { data: existing, error: selectErr } = await supabase
+        .from('system_settings')
+        .select('id')
+        .eq('batch_id', batchId)
+        .maybeSingle();
+
+      if (selectErr) {
+        throw new Error(`تعذر الاتصال بقاعدة البيانات للتحقق من إعدادات الدفعة: ${selectErr.message}`);
+      }
+
+      if (existing && existing.id) {
+        const { error: updateErr } = await supabase
+          .from('system_settings')
+          .update({
+            stations_config: normalizedStations,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', existing.id);
+
+        if (updateErr) {
+          throw new Error(`فشل تحديث إعدادات المحطات في قاعدة البيانات: ${updateErr.message}`);
+        }
+      } else {
+        const { error: insertErr } = await supabase
+          .from('system_settings')
+          .insert({
+            batch_id: batchId,
+            stations_config: normalizedStations,
+            updated_at: new Date().toISOString(),
+          });
+
+        if (insertErr) {
+          throw new Error(`فشل إنشاء إعدادات المحطات في قاعدة البيانات: ${insertErr.message}`);
+        }
+      }
+    }
+  }
+
+  // 2. UPDATE IN-MEMORY CACHE ON SUCCESS
+  batchStationsCache.set(batchId, normalizedStations);
+  currentSettings.stations = normalizedStations;
+
+  // 3. NOTIFY SUBSCRIBERS
+  listeners.forEach((listener) => listener(currentSettings));
+
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event('rihlat_settings_updated'));
+    window.dispatchEvent(new Event('rihlat_db_updated'));
+  }
+
+  return normalizedStations;
+}
+
+export function saveSystemSettings(newSettings: SystemSettings): SystemSettings {
+  const validation = validateStations(newSettings.stations);
+  if (!validation.isValid) {
+    throw new Error(validation.error || 'إعدادات المحطات غير صالحة.');
+  }
+
+  currentSettings = { ...newSettings };
 
   // Notify all active subscribers
   listeners.forEach((listener) => listener(currentSettings));
@@ -229,20 +428,8 @@ export function saveSystemSettings(newSettings: SystemSettings): SystemSettings 
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new Event('rihlat_settings_updated'));
     window.dispatchEvent(new Event('rihlat_db_updated'));
-    window.dispatchEvent(new Event('storage'));
   }
   return currentSettings;
-}
-
-if (typeof window !== 'undefined') {
-  window.addEventListener('storage', () => {
-    currentSettings = loadSettings();
-    listeners.forEach((listener) => listener(currentSettings));
-  });
-  window.addEventListener('rihlat_settings_updated', () => {
-    currentSettings = loadSettings();
-    listeners.forEach((listener) => listener(currentSettings));
-  });
 }
 
 export function subscribeToSettings(listener: (settings: SystemSettings) => void): () => void {
@@ -258,3 +445,4 @@ export function subscribeToSettings(listener: (settings: SystemSettings) => void
 export function resetSettingsToDefault(): SystemSettings {
   return saveSystemSettings(DEFAULT_SYSTEM_SETTINGS);
 }
+

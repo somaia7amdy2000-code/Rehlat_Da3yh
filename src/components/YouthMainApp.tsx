@@ -13,7 +13,7 @@ import fantasyBg from '../assets/images/fantasy_valley_bg_1785881049645.jpg';
 import { initialChallengesData } from '../data/challenges';
 import { Challenge, ChallengeCategory } from '../types/challenge';
 import { challengeService } from '../services/challengeService';
-import { subscribeToSettings, getSystemSettings, SystemSettings } from '../services/systemSettingsService';
+import { subscribeToSettings, getSystemSettings, SystemSettings, getStudentJourneyStations, JourneyStationSetting } from '../services/systemSettingsService';
 import { ClubPage } from './ClubPage';
 import { StudentLibraryView } from './StudentLibraryView';
 import { BatchStudent, Batch, BatchClass, BatchClub } from '../types/teacher';
@@ -604,6 +604,30 @@ export default function YouthMainApp({
 
   const actualCompletedChallengesCount = approvedFromList + unmatchedApprovedSubs;
 
+  // Student Batch Journey Stations (Loaded from Supabase via get_student_journey_stations RPC)
+  const [studentBatchStations, setStudentBatchStations] = useState<JourneyStationSetting[] | null>(null);
+
+  React.useEffect(() => {
+    let isMounted = true;
+    const fetchStudentStations = async () => {
+      if (currentStudent?.id && currentStudent?.studentCode) {
+        try {
+          const fetchedStations = await getStudentJourneyStations(currentStudent.id, currentStudent.studentCode);
+          if (isMounted && fetchedStations && fetchedStations.length > 0) {
+            setStudentBatchStations(fetchedStations);
+          }
+        } catch (err) {
+          console.warn('[YouthMainApp] Failed to load student journey stations via RPC:', err);
+        }
+      }
+    };
+
+    fetchStudentStations();
+    return () => {
+      isMounted = false;
+    };
+  }, [currentStudent?.id, currentStudent?.studentCode, currentStudent?.batchId]);
+
   // Dynamic Journey Metrics for Authenticated Student
   const currentJourneyMetrics: StudentJourneyMetrics = {
     id: currentStudent?.id || 'std-guest',
@@ -621,7 +645,10 @@ export default function YouthMainApp({
     specialRewardsCount: 0,
   };
 
-  const dynamicJourneyResult = calculateStudentJourney(currentJourneyMetrics, currentBatch?.stations);
+  const dynamicJourneyResult = calculateStudentJourney(
+    currentJourneyMetrics,
+    studentBatchStations || currentBatch?.stations
+  );
   const currentLevelIdx = dynamicJourneyResult.currentStationIndex;
 
   const userProfile = {

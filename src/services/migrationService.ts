@@ -1,6 +1,12 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import { getRihlatLocalStorageBackup } from '../utils/backupLocalStorage';
 
+export function isUUID(id?: string | null): boolean {
+  if (!id) return false;
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  return uuidRegex.test(id.trim());
+}
+
 /**
  * Deterministic String-to-UUID converter.
  * Converts plain string IDs (e.g. 'batch-g6-f', 'std-1') into valid RFC 4122 UUIDs
@@ -8,8 +14,7 @@ import { getRihlatLocalStorageBackup } from '../utils/backupLocalStorage';
  */
 export function toUUID(id: string): string {
   if (!id) return '00000000-0000-0000-0000-000000000000';
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  if (uuidRegex.test(id)) return id.toLowerCase();
+  if (isUUID(id)) return id.toLowerCase().trim();
 
   let h1 = 0x811c9dc5, h2 = 0x097c1da9, h3 = 0x2b38159b, h4 = 0x1a87b41e;
   for (let i = 0; i < id.length; i++) {
