@@ -204,8 +204,13 @@ export const TeacherDashboard: React.FC<{ onLogout?: () => void }> = ({ onLogout
   // --- CLASS HANDLERS ---
   const handleCreateClass = async (data: { name: string; teacherName: string; schedule: string; room: string }) => {
     if (!selectedBatch) return;
-    await teacherService.createClass(selectedBatch.id, data);
-    showToast(`🏫 تم إضافة الفصل (${data.name}) للدفعة بنجاح`);
+    try {
+      await teacherService.createClass(selectedBatch.id, data);
+      showToast(`🏫 تم إضافة الفصل (${data.name}) للدفعة بنجاح`);
+    } catch (err: any) {
+      console.error('Failed to create class:', err);
+      showToast(`❌ ${err?.message || 'فشل إضافة الفصل'}`);
+    }
     loadBatchData(selectedBatch.id);
     loadBatches();
   };
@@ -270,8 +275,12 @@ export const TeacherDashboard: React.FC<{ onLogout?: () => void }> = ({ onLogout
 
   const handleEditStudent = async (studentId: string, updates: Partial<BatchStudent>) => {
     if (!selectedBatch) return;
-    await teacherService.updateStudent(selectedBatch.id, studentId, updates);
-    showToast(`✨ تم تعديل بيانات الطالب بنجاح`);
+    try {
+      await teacherService.updateStudent(selectedBatch.id, studentId, updates);
+      showToast(`✨ تم تعديل بيانات الطالب بنجاح`);
+    } catch (err: any) {
+      showToast(`❌ ${err?.message || 'فشل تعديل بيانات الطالب'}`);
+    }
     loadBatchData(selectedBatch.id);
   };
 

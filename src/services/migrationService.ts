@@ -1,4 +1,4 @@
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { supabase, isSupabaseConfigured, getSessionUser } from '../lib/supabase';
 import { getRihlatLocalStorageBackup } from '../utils/backupLocalStorage';
 
 export function isUUID(id?: string | null): boolean {
@@ -511,7 +511,7 @@ export async function migrateBatchesOnlyForAuthenticatedTeacher(): Promise<Batch
   }
 
   // 1. Get current authenticated user from Supabase
-  const { data: { user }, error: userError } = await supabase.auth.getUser();
+  const { data: { user }, error: userError } = await getSessionUser();
   if (userError || !user) {
     report.errors.push('No authenticated teacher session found in Supabase Auth.');
     return report;

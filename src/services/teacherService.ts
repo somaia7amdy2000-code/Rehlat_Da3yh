@@ -15,7 +15,7 @@ import {
   ExcelImportFailure,
 } from '../types/teacher';
 import { calculateStudentJourney } from './journeyEngine';
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { supabase, isSupabaseConfigured, getSessionUser } from '../lib/supabase';
 import { toUUID } from './migrationService';
 import { getBatchStationsSync } from './systemSettingsService';
 
@@ -108,7 +108,13 @@ async function getRealStudentUuid(
   return null;
 }
 
-function saveDbToLocalStorage() {
+/**
+ * Persist the local cache. `notify` must be false when called from READ paths
+ * (getBatches / getStudentsByBatch / getClubsByBatch): the dashboard, reports and
+ * student portal reload on 'rihlat_db_updated', so announcing a change from a read
+ * made every load trigger the next one — an endless request loop.
+ */
+function saveDbToLocalStorage(notify: boolean = true) {
   try {
     const dbData = {
       batchesStore,
@@ -121,7 +127,7 @@ function saveDbToLocalStorage() {
       submissionsStore,
     };
     localStorage.setItem(TEACHER_DB_STORAGE_KEY, JSON.stringify(dbData));
-    if (typeof window !== 'undefined') {
+    if (notify && typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('rihlat_db_updated'));
       window.dispatchEvent(new Event('storage'));
     }
@@ -1267,7 +1273,7 @@ export const teacherService = {
 
     if (isSupabaseConfigured) {
       try {
-        const { data: { user } } = await supabase.auth.getUser();
+        const { data: { user } } = await getSessionUser();
         if (user) {
           const { data: supaBatches } = await supabase
             .from('batches')
@@ -1348,7 +1354,7 @@ export const teacherService = {
       if (batch.classCount === undefined) batch.classCount = classes.length;
       if (batch.clubCount === undefined) batch.clubCount = clubs.length;
     });
-    saveDbToLocalStorage();
+    saveDbToLocalStorage(false);
     return batchesStore;
   },
 
@@ -1545,7 +1551,7 @@ export const teacherService = {
           });
 
           studentsStore[batchId] = mappedStudents;
-          saveDbToLocalStorage();
+          saveDbToLocalStorage(false);
         }
       } catch (err) {
         console.warn('Failed to fetch students from Supabase:', err);
@@ -1579,7 +1585,7 @@ export const teacherService = {
     });
 
     if (updated) {
-      saveDbToLocalStorage();
+      saveDbToLocalStorage(false);
     }
     return result;
   },
@@ -1631,7 +1637,7 @@ export const teacherService = {
 
     if (isSupabaseConfigured) {
       try {
-        const { data: { user } } = await supabase.auth.getUser();
+        const { data: { user } } = await getSessionUser();
         if (user) {
           const classId = matchedClass && matchedClass.id.length > 30 ? matchedClass.id : (student.classId || null);
 
@@ -1711,12 +1717,78 @@ export const teacherService = {
   },
 
   /**
+   * Add / subtract points for a student (the +1 / +5 / +50 / -5 buttons).
+   * Records exactly `delta` as a point transaction (the DB trigger updates students.points),
+   * so quick repeated clicks are each counted once. Returns the student with the saved total.
+   */
+  async adjustStudentPoints(
+    batchId: string,
+    studentId: string,
+    delta: number,
+    reason: string = 'تعديل نقاط مباشر من المعلم'
+  ): Promise<BatchStudent> {
+    loadDbFromLocalStorage();
+    const localStudent = (studentsStore[batchId] || []).find((s) => s.id === studentId);
+
+    if (!isSupabaseConfigured || !isUUID(studentId)) {
+      const base = localStudent?.points || 0;
+      return this.updateStudent(batchId, studentId, { points: Math.max(0, base + delta) }, { localOnly: true });
+    }
+
+    const { data: { user } } = await getSessionUser();
+    if (!user) {
+      throw new Error('انتهت جلسة تسجيل الدخول، يرجى تسجيل الدخول مرة أخرى.');
+    }
+
+    const { data: currentRow, error: readErr } = await supabase
+      .from('students')
+      .select('points, batch_id')
+      .eq('id', studentId)
+      .maybeSingle();
+    if (readErr || !currentRow) {
+      throw new Error(`تعذر العثور على الطالبة في قاعدة البيانات${readErr ? `: ${readErr.message}` : ''}`);
+    }
+
+    const currentPoints = typeof currentRow.points === 'number' ? currentRow.points : 0;
+    // Never record a deduction larger than the student's balance (points can't go below 0)
+    const effectiveDelta = Math.max(delta, -currentPoints);
+    let savedPoints = currentPoints;
+
+    if (effectiveDelta !== 0) {
+      const { error: ptError } = await supabase.from('point_transactions').insert({
+        student_id: studentId,
+        batch_id: currentRow.batch_id || (isUUID(batchId) ? batchId : toUUID(batchId)),
+        teacher_id: user.id,
+        points: effectiveDelta,
+        reason,
+        category: 'reward',
+      });
+      if (ptError) {
+        throw new Error(`فشل حفظ النقاط في قاعدة البيانات: ${ptError.message}`);
+      }
+
+      const { data: freshRow } = await supabase
+        .from('students')
+        .select('points')
+        .eq('id', studentId)
+        .maybeSingle();
+      savedPoints = typeof freshRow?.points === 'number' ? freshRow.points : currentPoints + effectiveDelta;
+    }
+
+    if (!localStudent) {
+      await this.getStudentsByBatch(batchId);
+    }
+    return this.updateStudent(batchId, studentId, { points: savedPoints }, { localOnly: true });
+  },
+
+  /**
    * Update an existing student in batch
    */
   async updateStudent(
     batchId: string,
     studentId: string,
-    updates: Partial<Omit<BatchStudent, 'id' | 'batchId'>>
+    updates: Partial<Omit<BatchStudent, 'id' | 'batchId'>>,
+    options: { localOnly?: boolean } = {}
   ): Promise<BatchStudent> {
     loadDbFromLocalStorage();
     let targetBatchId = batchId;
@@ -1744,10 +1816,11 @@ export const teacherService = {
     const isValidUUID = (id?: string) =>
       typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 
-    // Update Supabase if configured
-    if (isSupabaseConfigured) {
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
+    // Update Supabase if configured (errors are surfaced to the caller instead of being swallowed)
+    if (isSupabaseConfigured && !options.localOnly) {
+      {
+        const { data: { user } } = await getSessionUser();
+        // No teacher session = student portal (students can't write to the DB; RLS) -> local cache only, as before.
         if (user) {
           const supaPayload: any = {};
           if (typeof updates.name === 'string') supaPayload.full_name = updates.name;
@@ -1765,14 +1838,25 @@ export const teacherService = {
               .eq('id', studentId);
 
             if (error) {
-              console.warn('Supabase update student warning:', error.message);
+              throw new Error(`فشل حفظ بيانات الطالبة في قاعدة البيانات: ${error.message}`);
             }
           }
 
-          // Point changes handled strictly through point_transactions
-          if (typeof updates.points === 'number') {
+          // Point changes handled strictly through point_transactions.
+          // The delta is computed from the points currently stored in the DATABASE (not the local
+          // cache, which the UI may already have changed optimistically -> delta 0 -> nothing saved).
+          if (typeof updates.points === 'number' && isValidUUID(studentId)) {
             const targetPoints = Math.max(0, updates.points);
-            const delta = targetPoints - oldPoints;
+            const { data: currentRow, error: currentErr } = await supabase
+              .from('students')
+              .select('points')
+              .eq('id', studentId)
+              .maybeSingle();
+            if (currentErr) {
+              throw new Error(`تعذر قراءة نقاط الطالبة الحالية: ${currentErr.message}`);
+            }
+            const dbPoints = typeof currentRow?.points === 'number' ? currentRow.points : oldPoints;
+            const delta = targetPoints - dbPoints;
 
             if (delta !== 0 && isValidUUID(studentId)) {
               const realTargetBatchId = isUUID(targetBatchId) ? targetBatchId : toUUID(targetBatchId);
@@ -1780,18 +1864,17 @@ export const teacherService = {
                 student_id: studentId,
                 batch_id: realTargetBatchId,
                 points: delta,
+                teacher_id: user.id,
                 reason: 'تعديل نقاط مباشر من المعلم',
                 category: 'reward'
               });
 
               if (ptError) {
-                console.warn('Supabase point_transactions warning:', ptError.message);
+                throw new Error(`فشل حفظ النقاط في قاعدة البيانات: ${ptError.message}`);
               }
             }
           }
         }
-      } catch (err: any) {
-        console.warn('Supabase updateStudent network warning:', err?.message || err);
       }
     }
 
@@ -1949,7 +2032,7 @@ export const teacherService = {
 
       if (isSupabaseConfigured) {
         try {
-          const { data: authData, error: authError } = await supabase.auth.getUser();
+          const { data: authData, error: authError } = await getSessionUser();
           if (authError || !authData?.user) {
             console.error(`[Excel Import] insert failed for (${studentName}): لا توجد جلسة معلم نشطة في Supabase`);
             failures.push({
@@ -2093,7 +2176,7 @@ export const teacherService = {
 
     if (isSupabaseConfigured) {
       try {
-        const { data: { user } } = await supabase.auth.getUser();
+        const { data: { user } } = await getSessionUser();
         if (user) {
           const { data: supaClasses, error } = await supabase
             .from('classes')
@@ -2199,7 +2282,7 @@ export const teacherService = {
       }
     }
     const computedClubs = computeBatchClubs(batchId);
-    saveDbToLocalStorage();
+    saveDbToLocalStorage(false);
     return computedClubs;
   },
 
@@ -2215,7 +2298,7 @@ export const teacherService = {
     let newClubId = `club-${Date.now()}`;
 
     if (isSupabaseConfigured) {
-      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      const { data: { user }, error: authError } = await getSessionUser();
       if (authError || !user) {
         throw new Error('لم يتم العثور على جلسة المعلم الحالية. يرجى إعادة تسجيل الدخول.');
       }
@@ -2582,7 +2665,7 @@ export const teacherService = {
       typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 
     if (isSupabaseConfigured) {
-      const { data: { user } } = await supabase.auth.getUser();
+      const { data: { user } } = await getSessionUser();
       if (!user) {
         throw new Error('غير مصرح: يجب تسجيل الدخول كمعلم لإنشاء تحدي');
       }
@@ -3562,7 +3645,7 @@ export const teacherService = {
     }
 
     if (isSupabaseConfigured) {
-      const { data: { user } } = await supabase.auth.getUser();
+      const { data: { user } } = await getSessionUser();
       if (!user) {
         throw new Error('غير مصرح: يجب تسجيل الدخول كمعلم لمراجعة المهمة');
       }
@@ -3723,7 +3806,7 @@ export const teacherService = {
 
     if (isSupabaseConfigured) {
       try {
-        const { data: { user } } = await supabase.auth.getUser();
+        const { data: { user } } = await getSessionUser();
         if (user) {
           const payload = {
             id: generatedUuid,
@@ -3796,7 +3879,7 @@ export const teacherService = {
 
   async deleteBatch(batchId: string): Promise<boolean> {
     if (isSupabaseConfigured) {
-      const { data: { user } } = await supabase.auth.getUser();
+      const { data: { user } } = await getSessionUser();
       if (user) {
         const { error } = await supabase.from('batches').delete().eq('id', batchId);
         if (error) {
@@ -3840,9 +3923,12 @@ export const teacherService = {
     };
 
     if (isSupabaseConfigured) {
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
+      {
+        const { data: { user } } = await getSessionUser();
+        if (!user) {
+          throw new Error('انتهت جلسة تسجيل الدخول، يرجى تسجيل الدخول مرة أخرى.');
+        }
+        {
           const payload = {
             id: generatedUuid,
             batch_id: batchId,
@@ -3859,9 +3945,10 @@ export const teacherService = {
             .select('*')
             .single();
 
-          if (error) {
-            console.error('Failed to save class to Supabase:', error.message);
-          } else if (inserted) {
+          if (error || !inserted) {
+            console.error('Failed to save class to Supabase:', error?.message);
+            throw new Error(`فشل حفظ الفصل في قاعدة البيانات: ${error?.message || 'لم يتم إرجاع الفصل'}`);
+          } else {
             newClass.id = inserted.id;
             newClass.name = inserted.name;
             newClass.teacherName = inserted.teacher_name || newClass.teacherName;
@@ -3869,8 +3956,6 @@ export const teacherService = {
             newClass.room = inserted.room || newClass.room;
           }
         }
-      } catch (err: any) {
-        console.error('Unexpected error inserting class into Supabase:', err?.message || err);
       }
     }
 
@@ -3915,7 +4000,7 @@ export const teacherService = {
     const targetClass = (classesStore[batchId] || []).find((c) => c.id === classId);
 
     if (isSupabaseConfigured) {
-      const { data: { user } } = await supabase.auth.getUser();
+      const { data: { user } } = await getSessionUser();
       if (user) {
         // Delete all students belonging to this class in Supabase before deleting the class row
         const { error: studentDeleteErr } = await supabase
@@ -4011,7 +4096,7 @@ export const teacherService = {
     const deletedClubName = clubToDelete?.name;
 
     if (isSupabaseConfigured) {
-      const { data: { user } } = await supabase.auth.getUser();
+      const { data: { user } } = await getSessionUser();
       if (user) {
         const realBatchUuid = isUUID(batchId) ? batchId : toUUID(batchId);
         const { data: batchData } = await supabase
@@ -4139,7 +4224,7 @@ export const teacherService = {
         throw new Error(`معرف النادي ليس UUID صحيحًا (${clubId}).`);
       }
 
-      const { data: { user } } = await supabase.auth.getUser();
+      const { data: { user } } = await getSessionUser();
       if (user) {
         const realBatchUuid = isUUID(batchId) ? batchId : toUUID(batchId);
         const { data: batchData } = await supabase
@@ -4425,7 +4510,7 @@ export const teacherService = {
   // --- STUDENT DELETE ---
   async deleteStudent(batchId: string, studentId: string): Promise<boolean> {
     if (isSupabaseConfigured) {
-      const { data: { user } } = await supabase.auth.getUser();
+      const { data: { user } } = await getSessionUser();
       if (user) {
         const { error } = await supabase.from('students').delete().eq('id', studentId);
         if (error) {
@@ -4546,7 +4631,7 @@ export const teacherService = {
     if (!isSupabaseConfigured) return null;
 
     try {
-      const { data: { user } } = await supabase.auth.getUser();
+      const { data: { user } } = await getSessionUser();
       if (!user) return null;
 
       const { data: profile } = await supabase

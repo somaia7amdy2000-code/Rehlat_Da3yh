@@ -55,21 +55,23 @@ export const StudentProfileModal: React.FC<StudentProfileModalProps> = ({ studen
   };
 
   const handleModifyPoints = async (delta: number) => {
-    const newPoints = Math.max(0, currentStudentPoints + delta);
-    setCurrentStudentPoints(newPoints);
-    activeStudent.points = newPoints;
+    // Optimistic display only. Do NOT write into activeStudent before saving: it is the same
+    // object as the service's local cache, so the service would see "no change" and skip the DB.
+    setCurrentStudentPoints((prev) => Math.max(0, prev + delta));
     try {
-      const updated = await teacherService.updateStudent(batch.id, activeStudent.id, { points: newPoints });
+      const updated = await teacherService.adjustStudentPoints(batch.id, activeStudent.id, delta);
       setCurrentStudentPoints(updated.points);
-      activeStudent.points = updated.points;
-      activeStudent.levelBadge = updated.levelBadge;
 
       const freshCtx = await teacherService.getStudentFullContext(activeStudent.id);
       if (freshCtx) {
         setFullContext(freshCtx);
+        setCurrentStudentPoints(freshCtx.student?.points ?? updated.points);
       }
-    } catch (err) {
+      window.dispatchEvent(new CustomEvent('rihlat_db_updated'));
+    } catch (err: any) {
       console.error('Failed to update student points in profile modal:', err);
+      setCurrentStudentPoints((prev) => Math.max(0, prev - delta));
+      alert(`⚠️ لم يتم حفظ النقاط: ${err?.message || 'خطأ غير معروف'}`);
     }
   };
 

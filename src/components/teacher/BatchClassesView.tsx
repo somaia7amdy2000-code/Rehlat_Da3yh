@@ -59,21 +59,24 @@ export const BatchClassesView: React.FC<BatchClassesViewProps> = ({
 
   // Handle immediate point update
   const handlePointsChange = async (student: BatchStudent, delta: number) => {
-    const currentPoints = student.points || 0;
-    const newPoints = Math.max(0, currentPoints + delta);
-    student.points = newPoints;
+    const previousPoints = student.points || 0;
+    // Optimistic UI update; the saved value from the database replaces it below
+    student.points = Math.max(0, previousPoints + delta);
     setForceUpdate({});
 
     try {
-      const updated = await teacherService.updateStudent(batch.id, student.id, { points: newPoints });
+      const updated = await teacherService.adjustStudentPoints(batch.id, student.id, delta);
       student.points = updated.points;
       student.levelBadge = updated.levelBadge;
       setForceUpdate({});
       if (onStudentUpdated) {
         onStudentUpdated();
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error updating student points:', error);
+      student.points = previousPoints;
+      setForceUpdate({});
+      alert(`⚠️ لم يتم حفظ النقاط: ${error?.message || 'خطأ غير معروف'}`);
     }
   };
 
