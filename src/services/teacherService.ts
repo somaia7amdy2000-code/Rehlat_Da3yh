@@ -54,17 +54,6 @@ let submissionsStore = { ...initialSubmissions };
 
 const TEACHER_DB_STORAGE_KEY = 'rihlat_teacher_db_v3';
 
-const isStaleRadioClub = (name?: string) =>
-  Boolean(
-    name &&
-    (
-      name.includes('الإذاعة') ||
-      name.includes('الإذاعه') ||
-      name.includes('اذاعة') ||
-      name.includes('اذاعه')
-    )
-  );
-
 function isUUID(str?: string): boolean {
   if (!str) return false;
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
@@ -156,26 +145,9 @@ function loadDbFromLocalStorage() {
       if (parsed.submissionsStore) submissionsStore = parsed.submissionsStore;
     }
 
-    // Clean up stale test club "نادي الإذاعة" and variants from local stores if present
-    let needsSave = false;
-    Object.keys(clubsStore).forEach((bId) => {
-      const origLen = clubsStore[bId]?.length || 0;
-      clubsStore[bId] = (clubsStore[bId] || []).filter((c) => c.name && !isStaleRadioClub(c.name));
-      if (clubsStore[bId].length !== origLen) needsSave = true;
-    });
-
-    Object.keys(studentsStore).forEach((bId) => {
-      (studentsStore[bId] || []).forEach((st) => {
-        if (isStaleRadioClub(st.clubName)) {
-          st.clubName = 'بدون نادي';
-          needsSave = true;
-        }
-      });
-    });
-
-    if (needsSave) {
-      saveDbToLocalStorage();
-    }
+    // NOTE: an old cleanup here hid every club whose name contains "إذاعة" (a leftover test club)
+    // and re-saved with a change event on every load. It hid real clubs such as "نادي الإذاعة"
+    // and could re-trigger reloads, so it was removed. Supabase is the source of truth for clubs.
   } catch (err) {
     console.warn('Failed to load teacher db from localStorage:', err);
   }
@@ -218,12 +190,12 @@ export function computeDynamicLevelBadge(student: BatchStudent): string {
 
 function computeBatchClubs(batchId: string): BatchClub[] {
   const students = studentsStore[batchId] || [];
-  let clubs = [...(clubsStore[batchId] || [])].filter((c) => c.name && !isStaleRadioClub(c.name));
+  let clubs = [...(clubsStore[batchId] || [])].filter((c) => c.name);
 
   // Auto-discover any club assigned to students that isn't explicitly in clubsStore yet
   const existingNames = new Set(clubs.map((c) => c.name.trim().toLowerCase()));
   students.forEach((s) => {
-    if (s.clubName && s.clubName !== 'بدون نادي' && s.clubName.trim() && !isStaleRadioClub(s.clubName)) {
+    if (s.clubName && s.clubName !== 'بدون نادي' && s.clubName.trim()) {
       const normalized = s.clubName.trim().toLowerCase();
       if (!existingNames.has(normalized)) {
         existingNames.add(normalized);
