@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { teacherService } from '../../services/teacherService';
 import {
@@ -122,21 +122,34 @@ export const TeacherDashboard: React.FC<{ onLogout?: () => void }> = ({ onLogout
     if (!selectedBatch?.id) return;
     loadBatchData(selectedBatch.id);
 
+    // Group bursts of change events into ONE reload (a save can fire several events)
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
     const handleUpdate = () => {
-      loadBatchData(selectedBatch.id);
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => loadBatchData(selectedBatch.id), 400);
     };
 
     window.addEventListener('rihlat_db_updated', handleUpdate);
     window.addEventListener('rihlat_settings_updated', handleUpdate);
     return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
       window.removeEventListener('rihlat_db_updated', handleUpdate);
       window.removeEventListener('rihlat_settings_updated', handleUpdate);
     };
   }, [selectedBatch?.id]);
 
+  // Only the most recent load may update the screen. On a real (slow) connection several loads
+  // overlap; without this, an older load that finishes last overwrote newer data (e.g. a club that
+  // was just created appeared and then disappeared).
+  const loadSeqRef = useRef(0);
+
   const loadBatchData = async (batchId: string) => {
+    const seq = ++loadSeqRef.current;
+    const isStale = () => seq !== loadSeqRef.current;
+
     // 1. Load classes first to populate classes mapping
     const batchClasses = await teacherService.getClassesByBatch(batchId);
+    if (isStale()) return;
     setClasses(batchClasses);
 
     // 2. Load students and all other batch data
@@ -158,6 +171,7 @@ export const TeacherDashboard: React.FC<{ onLogout?: () => void }> = ({ onLogout
       teacherService.getAllSubmissionsByBatch(batchId),
     ]);
 
+    if (isStale()) return;
     setStats(batchStats);
     setStudents(batchStudents);
     setClubs(batchClubs);

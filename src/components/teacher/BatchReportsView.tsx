@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   BarChart2,
@@ -80,8 +80,14 @@ export const BatchReportsView: React.FC<BatchReportsViewProps> = ({ batch, batch
   }, [batch?.id]);
 
   // Load real batch data from Supabase
+  // Only the newest load updates the report; the full-screen spinner shows only on the first
+  // load of a batch — later refreshes happen quietly in the background.
+  const loadSeqRef = useRef(0);
+  const loadedBatchRef = useRef<string | null>(null);
+
   const loadReportData = async (batchId: string) => {
-    setIsLoading(true);
+    const seq = ++loadSeqRef.current;
+    if (loadedBatchRef.current !== batchId) setIsLoading(true);
     try {
       const [fetchedBatch, fetchedStudents, fetchedClasses, fetchedClubs, fetchedChallenges, fetchedSubs] =
         await Promise.all([
@@ -93,6 +99,8 @@ export const BatchReportsView: React.FC<BatchReportsViewProps> = ({ batch, batch
           teacherService.getAllSubmissionsByBatch(batchId),
         ]);
 
+      if (seq !== loadSeqRef.current) return;
+      loadedBatchRef.current = batchId;
       if (fetchedBatch) setCurrentBatch(fetchedBatch);
       setStudents(fetchedStudents || []);
       setClasses(fetchedClasses || []);
@@ -115,20 +123,23 @@ export const BatchReportsView: React.FC<BatchReportsViewProps> = ({ batch, batch
     } catch (err) {
       console.error('Error loading real report data from Supabase:', err);
     } finally {
-      setIsLoading(false);
+      if (seq === loadSeqRef.current) setIsLoading(false);
     }
   };
 
   useEffect(() => {
     loadReportData(selectedBatchId);
 
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
     const handleUpdate = () => {
-      loadReportData(selectedBatchId);
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => loadReportData(selectedBatchId), 600);
     };
 
     window.addEventListener('rihlat_db_updated', handleUpdate);
     window.addEventListener('rihlat_settings_updated', handleUpdate);
     return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
       window.removeEventListener('rihlat_db_updated', handleUpdate);
       window.removeEventListener('rihlat_settings_updated', handleUpdate);
     };
