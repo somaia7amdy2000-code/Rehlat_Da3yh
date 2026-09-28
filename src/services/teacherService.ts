@@ -2318,94 +2318,97 @@ export const teacherService = {
       newClubId = data.id;
     }
 
-    // Assign initial students if selected
-    const batchStudents = studentsStore[batchId] || [];
+    // Assign initial students if selected.
+    // All members are saved in ONE bulk insert (previously 2-3 sequential requests per student,
+    // so adding 80 students took minutes and the club showed a partial count meanwhile).
     const members: ClubMember[] = [];
 
-    if (initialStudentIds && initialStudentIds.length > 0) {
+    const validIds = Array.from(new Set((initialStudentIds || []).filter((sid) => {
+      if (!isUUID(sid)) {
+        console.warn(`Skipping non-UUID student ID: ${sid}`);
+        return false;
+      }
+      return true;
+    })));
+
+    if (validIds.length > 0) {
       let batchStudents = studentsStore[batchId] || [];
       if (isSupabaseConfigured && batchStudents.length === 0) {
         batchStudents = await this.getStudentsByBatch(batchId);
       }
 
-      for (const sid of initialStudentIds) {
-        if (!isUUID(sid)) {
-          console.warn(`Skipping non-UUID student ID: ${sid}`);
-          continue;
-        }
+      const byId = new Map(batchStudents.map((s) => [s.id, s] as [string, BatchStudent]));
 
-        let student = batchStudents.find((s) => s.id === sid);
-        const realStudentUuid = sid;
-
-        if (isSupabaseConfigured) {
-          if (!student) {
-            const { data: stdData } = await supabase
-              .from('students')
-              .select('id, full_name, student_code, avatar_url, points, class_id')
-              .eq('id', realStudentUuid)
-              .maybeSingle();
-
-            if (stdData?.id) {
-              const matchedClass = (classesStore[batchId] || []).find((c) => c.id === stdData.class_id);
-              student = {
-                id: stdData.id,
-                batchId,
-                name: stdData.full_name,
-                studentCode: stdData.student_code,
-                className: matchedClass ? matchedClass.name : 'الفصل',
-                classId: stdData.class_id || undefined,
-                avatarUrl: stdData.avatar_url || '',
-                points: stdData.points || 0,
-                completedTasks: 0,
-                completedChallengesCount: 0,
-                levelBadge: computeDynamicLevelBadge({ points: stdData.points || 0 } as any),
-                status: 'active',
-              };
-            }
+      if (isSupabaseConfigured) {
+        // Fetch any selected students missing from the local cache in one query
+        const missingIds = validIds.filter((sid) => !byId.has(sid));
+        if (missingIds.length > 0) {
+          const { data: stdRows, error: stdErr } = await supabase
+            .from('students')
+            .select('id, full_name, student_code, avatar_url, points, class_id')
+            .in('id', missingIds);
+          if (stdErr) {
+            throw new Error(`تم إنشاء النادي، لكن تعذر تحميل بيانات الطالبات: ${stdErr.message}`);
           }
-
-          if (!student) {
-            throw new Error(`تعذر العثور على الطالبة بالمعرف (${realStudentUuid}) في قاعدة البيانات.`);
-          }
-
-          // Check existing membership
-          const { data: existingMember } = await supabase
-            .from('club_members')
-            .select('id')
-            .eq('club_id', newClubId)
-            .eq('student_id', realStudentUuid)
-            .maybeSingle();
-
-          if (!existingMember) {
-            const { error: memberErr } = await supabase
-              .from('club_members')
-              .insert({
-                club_id: newClubId,
-                student_id: realStudentUuid
-              });
-
-            if (memberErr) {
-              if (memberErr.code !== '23505' && !memberErr.message.includes('unique')) {
-                console.error('Supabase club_members insert error:', memberErr);
-                throw new Error(`فشل إضافة الطالبة إلى النادي في قاعدة البيانات: ${memberErr.message}`);
-              }
-            }
-          }
-        }
-
-        if (student) {
-          student.clubName = club.name;
-          student.clubId = newClubId;
-          members.push({
-            id: realStudentUuid,
-            name: student.name,
-            className: student.className,
-            avatarUrl: student.avatarUrl,
-            studentCode: student.studentCode,
-            points: student.points,
-            levelBadge: computeDynamicLevelBadge(student),
+          (stdRows || []).forEach((stdData: any) => {
+            const matchedClass = (classesStore[batchId] || []).find((c) => c.id === stdData.class_id);
+            byId.set(stdData.id, {
+              id: stdData.id,
+              batchId,
+              name: stdData.full_name,
+              studentCode: stdData.student_code,
+              className: matchedClass ? matchedClass.name : 'الفصل',
+              classId: stdData.class_id || undefined,
+              avatarUrl: stdData.avatar_url || '',
+              points: stdData.points || 0,
+              completedTasks: 0,
+              completedChallengesCount: 0,
+              levelBadge: computeDynamicLevelBadge({ points: stdData.points || 0 } as any),
+              status: 'active',
+            });
           });
         }
+
+        const foundIds = validIds.filter((sid) => byId.has(sid));
+        const notFound = validIds.length - foundIds.length;
+
+        // Skip students already in this club (one query), then insert the rest in one request
+        const { data: existingRows } = await supabase
+          .from('club_members')
+          .select('student_id')
+          .eq('club_id', newClubId);
+        const already = new Set((existingRows || []).map((r: any) => r.student_id));
+        const rows = foundIds
+          .filter((sid) => !already.has(sid))
+          .map((sid) => ({ club_id: newClubId, student_id: sid }));
+
+        if (rows.length > 0) {
+          const { error: memberErr } = await supabase.from('club_members').insert(rows);
+          if (memberErr && memberErr.code !== '23505') {
+            console.error('Supabase club_members bulk insert error:', memberErr);
+            throw new Error(`تم إنشاء النادي، لكن فشل إضافة الطالبات إليه: ${memberErr.message}`);
+          }
+        }
+
+        if (notFound > 0) {
+          console.warn(`${notFound} selected students were not found in the database and were skipped.`);
+        }
+      }
+
+      for (const sid of validIds) {
+        const student = byId.get(sid);
+        if (!student) continue;
+        student.clubName = club.name;
+        student.clubId = newClubId;
+        members.push({
+          id: sid,
+          name: student.name,
+          className: student.className,
+          avatarUrl: student.avatarUrl,
+          studentCode: student.studentCode,
+          points: student.points,
+          levelBadge: computeDynamicLevelBadge(student),
+        });
       }
     }
 
