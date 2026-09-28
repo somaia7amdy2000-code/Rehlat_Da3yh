@@ -398,8 +398,6 @@ export const ClubPage: React.FC<ClubPageProps> = ({
     );
   }
 
-  console.log('[TRACE ClubPage] clubInfo:', clubInfo);
-  console.log('[TRACE ClubPage] currentClub:', currentClub);
 
   if (!clubInfo || !clubInfo.name) {
     return (
@@ -409,7 +407,6 @@ export const ClubPage: React.FC<ClubPageProps> = ({
           <h3 className="font-black text-lg text-slate-800">لم تنضم إلى أي نادٍ بعد.</h3>
           <p className="text-xs font-bold text-slate-400">ستظهر تفاصيل النادي والمهام والإعلانات فور انضمامك لأحد الأندية من قبل المعلم.</p>
         </div>
-        <StudentClubDebugPanel debugInfo={debugInfo} studentContext={studentContext} currentClub={currentClub} />
       </div>
     );
   }
@@ -955,7 +952,6 @@ export const ClubPage: React.FC<ClubPageProps> = ({
         )}
       </AnimatePresence>
 
-      <StudentClubDebugPanel debugInfo={debugInfo} studentContext={studentContext} currentClub={currentClub} />
     </div>
   );
 };

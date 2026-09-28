@@ -455,6 +455,7 @@ export default function YouthMainApp({
   const [isEditProfileOpen, setIsEditProfileOpen] = useState(false);
   const [editNameInput, setEditNameInput] = useState('');
   const [editAvatarInput, setEditAvatarInput] = useState('');
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [isAllMessagesModalOpen, setIsAllMessagesModalOpen] = useState(false);
 
   // Fetch student context and system settings
@@ -2462,12 +2463,12 @@ export default function YouthMainApp({
                       </div>
 
                       <div>
-                        <label className="text-xs font-bold text-slate-700 block mb-1.5">الاسم الكامل</label>
+                        <label className="text-xs font-bold text-slate-700 block mb-1.5">الاسم الكامل (تعدّله المعلمة فقط)</label>
                         <input
                           type="text"
                           value={editNameInput}
-                          onChange={(e) => setEditNameInput(e.target.value)}
-                          className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 focus:outline-none focus:border-teal-500"
+                          disabled
+                          className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-500 bg-slate-100 cursor-not-allowed"
                         />
                       </div>
 
@@ -2484,21 +2485,36 @@ export default function YouthMainApp({
 
                     <div className="flex items-center gap-3 pt-3">
                       <button
+                        disabled={isSavingProfile}
                         onClick={async () => {
-                          if (currentBatch && currentStudent) {
-                            await teacherService.updateStudent(currentBatch.id, currentStudent.id, {
-                              name: editNameInput,
-                              avatarUrl: editAvatarInput,
-                            });
-                            await refreshStudentContext();
+                          if (!currentBatch || !currentStudent) return;
+                          const original = currentStudent.avatarUrl || '';
+                          if (editAvatarInput === original) {
+                            setIsEditProfileOpen(false);
+                            return;
                           }
-                          setIsEditProfileOpen(false);
-                          setToastMessage('✓ تم حفظ التعديلات بنجاح!');
-                          setTimeout(() => setToastMessage(null), 3000);
+                          setIsSavingProfile(true);
+                          try {
+                            // New picture = data URL from the file picker; empty = remove picture
+                            await teacherService.updateStudentAvatar(
+                              currentBatch.id,
+                              currentStudent.id,
+                              currentStudent.studentCode || '',
+                              editAvatarInput ? editAvatarInput : null
+                            );
+                            await refreshStudentContext();
+                            setIsEditProfileOpen(false);
+                            setToastMessage('✓ تم حفظ صورتك بنجاح!');
+                          } catch (err: any) {
+                            setToastMessage(`⚠️ ${err?.message || 'تعذر حفظ الصورة، حاولي مرة أخرى'}`);
+                          } finally {
+                            setIsSavingProfile(false);
+                            setTimeout(() => setToastMessage(null), 3500);
+                          }
                         }}
-                        className="flex-1 py-3 bg-[#14B8A6] hover:bg-teal-700 text-white rounded-xl font-bold text-xs shadow-md transition-all cursor-pointer"
+                        className="flex-1 py-3 bg-[#14B8A6] hover:bg-teal-700 disabled:opacity-60 text-white rounded-xl font-bold text-xs shadow-md transition-all cursor-pointer"
                       >
-                        حفظ التغييرات
+                        {isSavingProfile ? 'جاري الحفظ...' : 'حفظ التغييرات'}
                       </button>
                       <button
                         onClick={() => setIsEditProfileOpen(false)}
