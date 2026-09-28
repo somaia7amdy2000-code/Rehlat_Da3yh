@@ -207,20 +207,12 @@ export const BatchReportsView: React.FC<BatchReportsViewProps> = ({ batch, batch
   // Helper to compute rich metrics per student
   const computeStudentMetrics = (student: BatchStudent) => {
     // 0. Accurately resolve true club association from real Supabase clubs/club_members
+    // Match by unique database IDs only. Student codes repeat in every class (1, 2, 3...) and
+    // names/club names can repeat, so code/name matching counted the wrong students.
     const matchedClub = clubs.find(
       (c) =>
         (student.clubId && c.id === student.clubId) ||
-        c.members?.some(
-          (m) =>
-            m.id === student.id ||
-            (m.studentCode &&
-              student.studentCode &&
-              m.studentCode.trim().toLowerCase() === student.studentCode.trim().toLowerCase()) ||
-            (m.name && student.name && m.name.trim().toLowerCase() === student.name.trim().toLowerCase())
-        ) ||
-        (student.clubName &&
-          student.clubName !== 'بدون نادي' &&
-          c.name.trim().toLowerCase() === student.clubName.trim().toLowerCase())
+        c.members?.some((m) => m.id === student.id)
     );
 
     const resolvedClubName =
@@ -234,13 +226,17 @@ export const BatchReportsView: React.FC<BatchReportsViewProps> = ({ batch, batch
     };
 
     // 1. All submissions for this student within date range
-    const studentSubs = dateFilteredSubmissions.filter(
-      (s) =>
-        s.studentId === enrichedStudent.id ||
-        (s.studentCode &&
-          enrichedStudent.studentCode &&
-          s.studentCode.trim().toLowerCase() === enrichedStudent.studentCode.trim().toLowerCase()) ||
-        (s.studentName && s.studentName.trim().toLowerCase() === enrichedStudent.name.trim().toLowerCase())
+    const studentSubs = dateFilteredSubmissions.filter((s) =>
+      s.studentId
+        ? s.studentId === enrichedStudent.id
+        : // legacy rows without an ID: require BOTH the same code and the same name
+          Boolean(
+            s.studentCode &&
+              enrichedStudent.studentCode &&
+              s.studentCode.trim().toLowerCase() === enrichedStudent.studentCode.trim().toLowerCase() &&
+              s.studentName &&
+              s.studentName.trim().toLowerCase() === enrichedStudent.name.trim().toLowerCase()
+          )
     );
 
     // 2. Approved submissions
@@ -327,13 +323,7 @@ export const BatchReportsView: React.FC<BatchReportsViewProps> = ({ batch, batch
         list = list.filter(
           (cs) =>
             cs.student.clubId === selectedClubId ||
-            targetClub.members?.some(
-              (m) =>
-                m.id === cs.student.id ||
-                (m.studentCode && cs.student.studentCode && m.studentCode === cs.student.studentCode)
-            ) ||
-            (cs.student.clubName &&
-              cs.student.clubName.trim().toLowerCase() === targetClub.name.trim().toLowerCase())
+            Boolean(targetClub.members?.some((m) => m.id === cs.student.id))
         );
       }
     } else if (targetType === 'student' && selectedStudentId) {
@@ -1125,13 +1115,7 @@ export const BatchReportsView: React.FC<BatchReportsViewProps> = ({ batch, batch
                         const members = computedStudents.filter(
                           (cs) =>
                             cs.student.clubId === cl.id ||
-                            cl.members?.some(
-                              (m) =>
-                                m.id === cs.student.id ||
-                                (m.studentCode && cs.student.studentCode && m.studentCode === cs.student.studentCode)
-                            ) ||
-                            (cs.student.clubName &&
-                              cs.student.clubName.trim().toLowerCase() === cl.name.trim().toLowerCase())
+                            Boolean(cl.members?.some((m) => m.id === cs.student.id))
                         );
                         const totalApproved = members.reduce((sum, m) => sum + m.completedCount, 0);
                         const totalPoints = members.reduce((sum, m) => sum + (m.student.points || 0), 0);

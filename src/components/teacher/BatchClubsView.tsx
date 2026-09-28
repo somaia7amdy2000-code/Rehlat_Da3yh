@@ -410,7 +410,9 @@ export const BatchClubsView: React.FC<BatchClubsViewProps> = ({
                           const completedCount = (liveSelectedClub.members || []).filter((m) =>
                             submissions.some(
                               (sub) =>
-                                (sub.studentId === m.id || sub.studentName === m.name || sub.studentCode === m.studentCode) &&
+                                (sub.studentId
+                                  ? sub.studentId === m.id
+                                  : sub.studentName === m.name && sub.studentCode === m.studentCode) &&
                                 sub.status === 'approved' &&
                                 (sub.taskTitle === ch.title || sub.challengeId === ch.id)
                             )
