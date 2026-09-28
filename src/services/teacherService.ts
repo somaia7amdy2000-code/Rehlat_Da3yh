@@ -54,6 +54,29 @@ let submissionsStore = { ...initialSubmissions };
 
 const TEACHER_DB_STORAGE_KEY = 'rihlat_teacher_db_v3';
 
+/** Shrink an image (data URL) to a square-ish JPEG of at most `maxSize` px. */
+function shrinkImageToJpeg(dataUrl: string, maxSize: number, quality: number): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxSize / Math.max(img.width, img.height));
+      const w = Math.max(1, Math.round(img.width * scale));
+      const h = Math.max(1, Math.round(img.height * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return reject(new Error('تعذر تجهيز الصورة'));
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, w, h);
+      ctx.drawImage(img, 0, 0, w, h);
+      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('تعذر تجهيز الصورة'))), 'image/jpeg', quality);
+    };
+    img.onerror = () => reject(new Error('الملف المختار ليس صورة صالحة'));
+    img.src = dataUrl;
+  });
+}
+
 function isUUID(str?: string): boolean {
   if (!str) return false;
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
@@ -2534,9 +2557,14 @@ export const teacherService = {
       return sClub === tClub || sClub.includes(tClub) || tClub.includes(sClub);
     }
     if (targetType === 'student') {
-      if (ch.targetId && student.id === ch.targetId) return true;
-      if (ch.targetStudentId && student.id === ch.targetStudentId) return true;
-      if (ch.targetStudentCode && student.studentCode && student.studentCode.trim().toLowerCase() === ch.targetStudentCode.trim().toLowerCase()) return true;
+      // A specific student is identified by ID. Codes repeat across classes and names can repeat,
+      // so code/name are only used for old challenges that have no student ID at all.
+      if (ch.targetId || ch.targetStudentId) {
+        return student.id === ch.targetId || student.id === ch.targetStudentId;
+      }
+      if (ch.targetStudentCode && student.studentCode && student.studentCode.trim().toLowerCase() === ch.targetStudentCode.trim().toLowerCase()) {
+        return !ch.targetName || student.name.trim() === ch.targetName.trim();
+      }
       if (ch.targetName && student.name.trim() === ch.targetName.trim()) return true;
       return false;
     }
@@ -3450,6 +3478,58 @@ export const teacherService = {
   async getPendingSubmissions(batchId: string): Promise<PendingSubmission[]> {
     const all = await this.getAllSubmissionsByBatch(batchId);
     return all.filter((s) => s.status === 'pending');
+  },
+
+  /**
+   * Student portal: change the student's own profile photo and save it to Supabase.
+   * The image is shrunk to 256px JPEG in the browser, uploaded to the public 'avatars' bucket,
+   * then saved with the secure RPC update_student_avatar (verifies student id + code).
+   * Pass imageDataUrl = null to remove the photo.
+   */
+  async updateStudentAvatar(
+    batchId: string,
+    studentId: string,
+    studentCode: string,
+    imageDataUrl: string | null
+  ): Promise<string> {
+    if (!isSupabaseConfigured) {
+      throw new Error('قاعدة البيانات غير متصلة حالياً.');
+    }
+    if (!isUUID(studentId) || !studentCode || !studentCode.trim()) {
+      throw new Error('تعذر التحقق من هويتك، يرجى تسجيل الدخول مجدداً.');
+    }
+
+    let publicUrl = '';
+    if (imageDataUrl) {
+      const blob = await shrinkImageToJpeg(imageDataUrl, 256, 0.85);
+      const path = `students/${studentId}/${Date.now()}.jpg`;
+      const { error: uploadError } = await supabase.storage
+        .from('avatars')
+        .upload(path, blob, { contentType: 'image/jpeg', upsert: false, cacheControl: '31536000' });
+      if (uploadError) {
+        throw new Error(`فشل رفع الصورة: ${uploadError.message}`);
+      }
+      publicUrl = supabase.storage.from('avatars').getPublicUrl(path).data.publicUrl;
+    }
+
+    const { error: rpcError } = await supabase.rpc('update_student_avatar', {
+      p_student_id: studentId,
+      p_student_code: studentCode.trim(),
+      p_avatar_url: publicUrl,
+    });
+    if (rpcError) {
+      throw new Error(`فشل حفظ الصورة: ${rpcError.message}`);
+    }
+
+    // Keep the local cache in sync (no DB write here: already saved above)
+    loadDbFromLocalStorage();
+    const list = studentsStore[batchId] || [];
+    const st = list.find((x) => x.id === studentId);
+    if (st) {
+      st.avatarUrl = publicUrl;
+      saveDbToLocalStorage();
+    }
+    return publicUrl;
   },
 
   /**
