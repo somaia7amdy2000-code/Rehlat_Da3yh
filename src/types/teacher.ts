@@ -41,6 +41,7 @@ export interface BatchStudent {
   avatarUrl: string;
   attendanceRate?: number;
   status: 'active' | 'inactive';
+  teacherNotes?: string;
 }
 
 export interface BatchClass {
