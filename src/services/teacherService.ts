@@ -1540,6 +1540,7 @@ export const teacherService = {
               completedChallengesCount: 0,
               avatarUrl: ss.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=200',
               status: ss.status || 'active',
+              teacherNotes: ss.notes || undefined,
             };
             stObj.levelBadge = computeDynamicLevelBadge(stObj);
             return stObj;
@@ -1822,7 +1823,32 @@ export const teacherService = {
           if (typeof updates.studentCode === 'string') supaPayload.student_code = updates.studentCode;
           if (typeof updates.avatarUrl === 'string') supaPayload.avatar_url = updates.avatarUrl;
           if (typeof (updates as any).notes === 'string') supaPayload.notes = (updates as any).notes;
+          if (typeof updates.teacherNotes === 'string') supaPayload.notes = updates.teacherNotes.trim() || null;
           if (typeof updates.status === 'string') supaPayload.status = updates.status;
+
+          // Class change (edit window / "move to class"): save class_id, not just the name on screen
+          const currentLocal = list[index];
+          if (
+            typeof updates.className === 'string' &&
+            updates.className.trim() &&
+            updates.className.trim() !== (currentLocal?.className || '').trim()
+          ) {
+            const wantedName = updates.className.trim();
+            let cls = (classesStore[targetBatchId] || []).find((c) => c.name.trim() === wantedName);
+            if (!cls || !isUUID(cls.id)) {
+              const { data: clsRows } = await supabase
+                .from('classes')
+                .select('id, name')
+                .eq('batch_id', isUUID(targetBatchId) ? targetBatchId : toUUID(targetBatchId));
+              const found = (clsRows || []).find((c: any) => (c.name || '').trim() === wantedName);
+              if (found) cls = { ...(cls || ({} as any)), id: found.id, name: found.name };
+            }
+            if (!cls || !isUUID(cls.id)) {
+              throw new Error(`تعذر العثور على الفصل (${wantedName}) في قاعدة البيانات.`);
+            }
+            supaPayload.class_id = cls.id;
+            (updates as any).classId = cls.id;
+          }
 
           // Note: Do NOT include points in supaPayload! Points are updated via point_transactions trigger only.
 
@@ -1833,7 +1859,56 @@ export const teacherService = {
               .eq('id', studentId);
 
             if (error) {
+              if (error.code === '23505') {
+                throw new Error('كود الطالبة مستخدم بالفعل لطالبة أخرى في الفصل الجديد.');
+              }
               throw new Error(`فشل حفظ بيانات الطالبة في قاعدة البيانات: ${error.message}`);
+            }
+          }
+
+          // Club change: the edit window sends clubId ('' = no club). Save it in club_members.
+          if (Object.prototype.hasOwnProperty.call(updates, 'clubId') && isValidUUID(studentId)) {
+            const wantedClubId = (updates.clubId || '').trim();
+            const { data: currentMemberships, error: cmErr } = await supabase
+              .from('club_members')
+              .select('club_id')
+              .eq('student_id', studentId);
+            if (cmErr) {
+              throw new Error(`تعذر قراءة نادي الطالبة الحالي: ${cmErr.message}`);
+            }
+            const currentIds = (currentMemberships || []).map((m: any) => m.club_id);
+            const alreadyOnlyInWanted =
+              (wantedClubId && currentIds.length === 1 && currentIds[0] === wantedClubId) ||
+              (!wantedClubId && currentIds.length === 0);
+
+            if (!alreadyOnlyInWanted) {
+              if (wantedClubId && !isValidUUID(wantedClubId)) {
+                throw new Error('النادي المختار غير صالح، أعيدي تحميل الصفحة وحاولي مرة أخرى.');
+              }
+              // The window has ONE club per student: leave other clubs, join the chosen one
+              const toRemove = currentIds.filter((id: string) => id !== wantedClubId);
+              if (toRemove.length > 0) {
+                const { error: delErr } = await supabase
+                  .from('club_members')
+                  .delete()
+                  .eq('student_id', studentId)
+                  .in('club_id', toRemove);
+                if (delErr) {
+                  throw new Error(`فشل إخراج الطالبة من ناديها السابق: ${delErr.message}`);
+                }
+              }
+              if (wantedClubId && !currentIds.includes(wantedClubId)) {
+                const { error: insErr } = await supabase
+                  .from('club_members')
+                  .insert({ club_id: wantedClubId, student_id: studentId });
+                if (insErr && insErr.code !== '23505') {
+                  throw new Error(`فشل إضافة الطالبة إلى النادي: ${insErr.message}`);
+                }
+              }
+            }
+            if (!wantedClubId) {
+              (updates as any).clubName = 'بدون نادي';
+              (updates as any).clubId = undefined;
             }
           }
 
