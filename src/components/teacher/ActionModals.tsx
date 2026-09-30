@@ -2517,7 +2517,7 @@ interface EditStudentModalProps {
   onSubmit: (studentId: string, updates: Partial<BatchStudent>) => void;
   onDelete?: (studentId: string) => void;
   classesList?: string[];
-  clubsList?: string[];
+  clubsList?: Array<string | { id: string; name: string; label?: string }>;
 }
 
 export const EditStudentModal: React.FC<EditStudentModalProps> = ({
@@ -2532,8 +2532,17 @@ export const EditStudentModal: React.FC<EditStudentModalProps> = ({
   const [name, setName] = useState('');
   const [className, setClassName] = useState('الفصل E');
   const [clubName, setClubName] = useState('بدون نادي');
+  // Selected club ID ('' = no club). Club names can repeat, so the choice is saved by ID.
+  const [clubChoice, setClubChoice] = useState('');
   const [points, setPoints] = useState(0);
   const [teacherNotes, setTeacherNotes] = useState('');
+
+  const clubOptions = clubsList.map((c) =>
+    typeof c === 'string' ? { id: c, name: c, label: c } : { id: c.id, name: c.name, label: c.label || c.name }
+  );
+  const selectedClub = clubOptions.find((c) => c.id === clubChoice);
+  const chosenClubName = selectedClub ? selectedClub.name : 'بدون نادي';
+  const chosenClubId = selectedClub && selectedClub.id !== selectedClub.name ? selectedClub.id : '';
 
   // Sub-dialogs state
   const [showMoveModal, setShowMoveModal] = useState(false);
@@ -2545,6 +2554,11 @@ export const EditStudentModal: React.FC<EditStudentModalProps> = ({
       setName(student.name || '');
       setClassName(student.className || '');
       setClubName(student.clubName || 'بدون نادي');
+      {
+        const byId = clubOptions.find((c) => student.clubId && c.id === student.clubId);
+        const byName = clubOptions.find((c) => c.name === student.clubName);
+        setClubChoice((byId || byName)?.id || '');
+      }
       setPoints(student.points || 0);
       setTeacherNotes(student.teacherNotes || '');
       setTargetMoveClass(student.className || '');
@@ -2579,7 +2593,8 @@ export const EditStudentModal: React.FC<EditStudentModalProps> = ({
     onSubmit(student.id, {
       name,
       className,
-      clubName,
+      clubName: chosenClubName,
+      clubId: chosenClubId,
       points,
       teacherNotes,
       levelBadge: currentLevelTitle,
@@ -2596,7 +2611,6 @@ export const EditStudentModal: React.FC<EditStudentModalProps> = ({
     onSubmit(student.id, {
       name,
       className: targetMoveClass,
-      clubName,
       teacherNotes,
       levelBadge: currentLevelTitle,
     });
@@ -2665,18 +2679,18 @@ export const EditStudentModal: React.FC<EditStudentModalProps> = ({
               <div>
                 <label className="block mb-1 text-slate-800">النادي المنتسب له</label>
                 <select
-                  value={clubName}
-                  onChange={(e) => setClubName(e.target.value)}
+                  value={clubChoice}
+                  onChange={(e) => setClubChoice(e.target.value)}
                   className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-teal-500 font-bold text-slate-900"
                 >
-                  {clubsList.length === 0 ? (
-                    <option value="بدون نادي">لا توجد أندية تم إنشاؤها بعد</option>
+                  {clubOptions.length === 0 ? (
+                    <option value="">لا توجد أندية تم إنشاؤها بعد</option>
                   ) : (
                     <>
-                      <option value="بدون نادي">بدون نادي</option>
-                      {clubsList.map((clb) => (
-                        <option key={clb} value={clb}>
-                          {clb}
+                      <option value="">بدون نادي</option>
+                      {clubOptions.map((clb) => (
+                        <option key={clb.id} value={clb.id}>
+                          {clb.label}
                         </option>
                       ))}
                     </>

@@ -767,7 +767,14 @@ export const TeacherDashboard: React.FC<{ onLogout?: () => void }> = ({ onLogout
         onSubmit={handleEditStudent}
         onDelete={handleDeleteStudent}
         classesList={classesNames}
-        clubsList={clubsNames}
+        clubsList={clubs.map((c) => {
+          const duplicated = clubs.filter((o) => o.name.trim() === c.name.trim()).length > 1;
+          return {
+            id: c.id,
+            name: c.name,
+            label: duplicated ? `${c.name} (${c.memberCount ?? c.members?.length ?? 0} عضو)` : c.name,
+          };
+        })}
       />
 
       <ImportExcelModal
